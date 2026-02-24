@@ -62,10 +62,6 @@ indirect enum Expr {
     }
 }
 
-enum OrderDirection {
-    case asc, desc
-}
-
 struct OrderBy {
     let field: String
     let direction: OrderDirection
