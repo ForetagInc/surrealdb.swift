@@ -1,6 +1,6 @@
 import Foundation
 
-enum SurrealValue {
+public enum SurrealValue {
     case null
     case bool(Bool)
     case int(Int)
