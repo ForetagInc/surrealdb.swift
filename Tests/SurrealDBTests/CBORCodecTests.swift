@@ -56,3 +56,28 @@ func cborCodec_roundTripsGeographyValues() throws {
     #expect(decodedPoint == point)
     #expect(decodedLine == line)
 }
+
+@Test
+func cborCodec_decodesTopLevelLiveNotificationEnvelope() throws {
+    let queryID = UUID().uuidString.lowercased()
+
+    var notificationMap = CBOR.Map()
+    notificationMap[.utf8String("id")] = .utf8String(queryID)
+    notificationMap[.utf8String("action")] = .utf8String("CREATE")
+    notificationMap[.utf8String("result")] = CBORSurrealCodec.toCBOR(
+        .object([
+            "id": .string("live_person:test123"),
+            "name": .string("Ada"),
+            "age": .int(30),
+        ])
+    )
+
+    let notificationData = try CBORSerialization.data(from: .map(notificationMap))
+    let envelope = try CBORSurrealCodec.decodeRPCEnvelope(notificationData)
+    let event = CBORSurrealCodec.decodeLiveWireEvent(from: envelope)
+
+    #expect(event != nil)
+    #expect(event?.action == .create)
+    #expect(event?.recordID == "live_person:test123")
+    #expect(event?.queryID.uuidString.lowercased() == queryID)
+}

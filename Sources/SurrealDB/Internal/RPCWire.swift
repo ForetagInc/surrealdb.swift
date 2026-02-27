@@ -11,6 +11,7 @@ struct RPCRequest: Sendable {
 
 struct RPCResponseEnvelope: Sendable {
     let id: String?
+    let action: String?
     let result: SurrealValue?
     let error: RPCErrorObject?
 }
@@ -92,6 +93,7 @@ enum CBORSurrealCodec {
         }
 
         let id = map[string: "id"].flatMap(stringFromSurrealValue(_:))
+        let action = map[string: "action"].flatMap(stringFromSurrealValue(_:))
         let result = map[string: "result"]
 
         var error: RPCErrorObject?
@@ -99,7 +101,32 @@ enum CBORSurrealCodec {
             error = try decodeRPCError(from: rawError)
         }
 
-        return RPCResponseEnvelope(id: id, result: result, error: error)
+        return RPCResponseEnvelope(id: id, action: action, result: result, error: error)
+    }
+
+    static func decodeLiveWireEvent(from envelope: RPCResponseEnvelope) -> LiveWireEvent? {
+        if let actionRaw = envelope.action,
+           let action = LiveAction(rawValue: actionRaw),
+           let id = envelope.id,
+           let queryID = UUID(uuidString: id),
+           let payloadValue = envelope.result {
+            let recordValue = liveRecordValue(fromPayload: payloadValue)
+            guard let recordValue, let recordID = recordIDFromSurrealValue(recordValue) else {
+                return nil
+            }
+
+            return LiveWireEvent(
+                queryID: queryID,
+                action: action,
+                recordID: recordID,
+                payload: payloadValue
+            )
+        }
+
+        guard let result = envelope.result else {
+            return nil
+        }
+        return decodeLiveWireEvent(from: result)
     }
 
     static func decodeQueryResults(from value: SurrealValue) throws -> [RPCQueryResult] {
@@ -148,7 +175,6 @@ enum CBORSurrealCodec {
             let idValue = object["id"],
             let actionValue = object["action"],
             let payloadValue = object["result"],
-            let recordValue = object["record"],
             case .string(let actionRaw) = actionValue,
             let action = LiveAction(rawValue: actionRaw)
         else {
@@ -159,7 +185,8 @@ enum CBORSurrealCodec {
             return nil
         }
 
-        guard let recordID = recordIDFromSurrealValue(recordValue) else {
+        let recordValue = object["record"] ?? liveRecordValue(fromPayload: payloadValue)
+        guard let recordValue, let recordID = recordIDFromSurrealValue(recordValue) else {
             return nil
         }
 
@@ -509,6 +536,17 @@ enum CBORSurrealCodec {
             return raw
         case .recordID(let value):
             return value.rawValue
+        default:
+            return nil
+        }
+    }
+
+    private static func liveRecordValue(fromPayload payload: SurrealValue) -> SurrealValue? {
+        switch payload {
+        case .object(let object):
+            return object["id"] ?? object["record"]
+        case .string, .recordID:
+            return payload
         default:
             return nil
         }

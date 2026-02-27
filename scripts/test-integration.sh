@@ -70,8 +70,7 @@ start_local_surreal() {
   fi
 
   mkdir -p .build
-  export SURREALDB_SKIP_SIGNIN=1
-  "${surreal_bin}" start --log info --unauthenticated memory --bind "${SURREALDB_HOST}:${SURREALDB_PORT}" > .build/surrealdb.log 2>&1 &
+  "${surreal_bin}" start --log info --user "${SURREALDB_ROOT_USER}" --pass "${SURREALDB_ROOT_PASS}" memory --bind "${SURREALDB_HOST}:${SURREALDB_PORT}" > .build/surrealdb.log 2>&1 &
   SURREAL_PID="$!"
   START_MODE="local"
 }
@@ -97,3 +96,4 @@ swift test --filter integration_wsAuthQueryCrud
 swift test --filter integration_httpParity
 swift test --filter integration_wsFullCRUDQueries
 swift test --filter integration_wsFunctionAndGeoQueries
+swift test --filter integration_wsLiveQueries

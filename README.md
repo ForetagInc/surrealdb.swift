@@ -1,6 +1,6 @@
 # SurrealDB Swift SDK
 
-| Alpha - Not tested for Production yet
+> Alpha - Not tested for Production yet
 
 ## Requirements
 
@@ -9,17 +9,26 @@
 
 ## Features
 
+- Raw Queries via HTTP
+- Live Queries via HTTP or WebSocket
 - Great DX via Macros for Models / Tables
 - Supports iOS and iPadOS with CarPlay
 - Supports MacOS, watchOS, tvOS and visionOS
-- Remote connection via HTTP or WebSockets
+- Remote Connections
+
+## Roadmap
+
+- [ ] Standalone Query Builder
+- [ ] Advanced Error Handling
+- [ ] Embedded / In-memory SurrealDB
+- [ ] File Uploads (Buckets)
 
 ## Installation / Usage
 
 Add:
 
 ```swift
-	.package(url: "https://github.com/ForetagInc/surrealdb.swift.git", from: "0.1.0"),
+.package(url: "https://github.com/ForetagInc/surrealdb.swift.git", from: "0.1.0"),
 ```
 
 to your `dependencies` array in your `Package.swift` file.

@@ -16,6 +16,20 @@ private struct IntegrationPerson: SurrealModel, Codable, Sendable {
     }
 }
 
+private struct IntegrationLivePerson: SurrealModel, Codable, Sendable {
+    static let surrealTable = "live_person"
+
+    let id: String?
+    let name: String
+    let age: Int
+
+    init(id: String? = nil, name: String, age: Int) {
+        self.id = id
+        self.name = name
+        self.age = age
+    }
+}
+
 private func integrationEnabled() -> Bool {
     ProcessInfo.processInfo.environment["SURREALDB_RUN_INTEGRATION"] == "1"
 }
@@ -43,6 +57,30 @@ private func shouldSkipSignin() -> Bool {
 private func authenticateIfNeeded(_ client: some SurrealQueryable) async throws {
     guard !shouldSkipSignin() else { return }
     _ = try await client.signin(.root(username: rootUsername(), password: rootPassword()))
+}
+
+private func awaitTaskValue<T: Sendable>(
+    _ task: Task<T, Error>,
+    timeoutSeconds: Double,
+    timeoutMessage: String
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await task.value
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(max(timeoutSeconds, 0.1) * 1_000_000_000))
+            task.cancel()
+            throw SurrealError.invalidResponse(timeoutMessage)
+        }
+
+        guard let value = try await group.next() else {
+            throw SurrealError.invalidResponse(timeoutMessage)
+        }
+
+        group.cancelAll()
+        return value
+    }
 }
 
 private func assertAllOK(_ rows: [RPCQueryResult]) {
@@ -165,4 +203,73 @@ func integration_wsFunctionAndGeoQueries() async throws {
 
     let geoQuery = try await client.queryRaw("RETURN geo::distance((51.5074, -0.1278), (40.7128, -74.0060));", bindings: [:])
     assertAllOK(geoQuery)
+}
+
+@Test
+func integration_wsLiveQueries() async throws {
+    guard integrationEnabled() else { return }
+
+    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
+    try await client.connect()
+    defer { Task { await client.close() } }
+
+    try await authenticateIfNeeded(client)
+    try await client.use(namespace: "test", database: "test")
+
+    let defineTable = try await client.queryRaw("DEFINE TABLE \(IntegrationLivePerson.surrealTable) SCHEMALESS;", bindings: [:])
+    assertAllOK(defineTable)
+
+    let recordKey = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+    let rid = "\(IntegrationLivePerson.surrealTable):\(recordKey)"
+
+    let stream = try await client.live(SurrealDSL.live(IntegrationLivePerson.self))
+    let collector = Task<[LiveEvent<IntegrationLivePerson>], Error> {
+        var iterator = stream.makeAsyncIterator()
+        var events: [LiveEvent<IntegrationLivePerson>] = []
+
+        while events.count < 3 {
+            guard let event = await iterator.next() else {
+                throw SurrealError.invalidResponse("Live stream ended before receiving expected events.")
+            }
+
+            if event.action == .killed {
+                continue
+            }
+
+            events.append(event)
+        }
+
+        return events
+    }
+    defer { collector.cancel() }
+
+    let create = try await client.queryRaw("CREATE \(rid) CONTENT { name: 'LiveAda', age: 30 };", bindings: [:])
+    assertAllOK(create)
+
+    let update = try await client.queryRaw("UPDATE \(rid) CONTENT { name: 'LiveAda', age: 31 };", bindings: [:])
+    assertAllOK(update)
+
+    let delete = try await client.queryRaw("DELETE \(rid);", bindings: [:])
+    assertAllOK(delete)
+
+    let events = try await awaitTaskValue(
+        collector,
+        timeoutSeconds: 10,
+        timeoutMessage: "Timed out waiting for live query events."
+    )
+
+    #expect(events.count == 3)
+    #expect(events.contains(where: { $0.action == .create }))
+    #expect(events.contains(where: { $0.action == .update }))
+    #expect(events.contains(where: { $0.action == .delete }))
+
+    let eventQueryIDs = Set(events.map(\.queryID))
+    #expect(eventQueryIDs.count == 1)
+
+    if let updateEvent = events.first(where: { $0.action == .update }) {
+        #expect(updateEvent.decoded?.name == "LiveAda")
+        #expect(updateEvent.decoded?.age == 31)
+    } else {
+        Issue.record("Missing UPDATE live event.")
+    }
 }

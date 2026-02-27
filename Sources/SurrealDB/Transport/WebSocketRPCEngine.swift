@@ -189,16 +189,12 @@ actor WebSocketRPCEngine: LiveRPCEngine {
     private func handleIncoming(_ data: Data) async throws {
         let response = try CBORSurrealCodec.decodeRPCEnvelope(data)
 
-        if let id = response.id {
-            if let continuation = pending.removeValue(forKey: id) {
-                continuation.resume(returning: response)
-            }
+        if let id = response.id, let continuation = pending.removeValue(forKey: id) {
+            continuation.resume(returning: response)
             return
         }
 
-        guard let result = response.result,
-              let liveEvent = CBORSurrealCodec.decodeLiveWireEvent(from: result)
-        else {
+        guard let liveEvent = CBORSurrealCodec.decodeLiveWireEvent(from: response) else {
             return
         }
 
