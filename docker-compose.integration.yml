@@ -1,0 +1,6 @@
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v3.0.1
+    command: start --log info --user root --pass root memory
+    ports:
+      - "${SURREALDB_PORT:-8000}:8000"
