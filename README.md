@@ -1,8 +1,11 @@
 # SurrealDB Swift SDK
 
+| Alpha - Not tested for Production yet
+
 ## Requirements
 
 - Swift 6.1
+- SurrealDB v3+ (Designed for v3.0.1)
 
 ## Features
 
