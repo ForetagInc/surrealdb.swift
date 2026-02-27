@@ -90,7 +90,7 @@ actor WebSocketRPCEngine: LiveRPCEngine {
     }
 
     private func establishSocket() async throws {
-        let socket = urlSession.webSocketTask(with: endpoint)
+        let socket = urlSession.webSocketTask(with: endpoint, protocols: ["cbor"])
         task = socket
         socket.resume()
 

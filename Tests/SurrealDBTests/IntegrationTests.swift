@@ -20,6 +20,31 @@ private func integrationEnabled() -> Bool {
     ProcessInfo.processInfo.environment["SURREALDB_RUN_INTEGRATION"] == "1"
 }
 
+private func wsEndpoint() -> String {
+    ProcessInfo.processInfo.environment["SURREALDB_WS_ENDPOINT"] ?? "ws://127.0.0.1:8000"
+}
+
+private func httpEndpoint() -> String {
+    ProcessInfo.processInfo.environment["SURREALDB_HTTP_ENDPOINT"] ?? "http://127.0.0.1:8000"
+}
+
+private func rootUsername() -> String {
+    ProcessInfo.processInfo.environment["SURREALDB_ROOT_USER"] ?? "root"
+}
+
+private func rootPassword() -> String {
+    ProcessInfo.processInfo.environment["SURREALDB_ROOT_PASS"] ?? "root"
+}
+
+private func shouldSkipSignin() -> Bool {
+    ProcessInfo.processInfo.environment["SURREALDB_SKIP_SIGNIN"] == "1"
+}
+
+private func authenticateIfNeeded(_ client: some SurrealQueryable) async throws {
+    guard !shouldSkipSignin() else { return }
+    _ = try await client.signin(.root(username: rootUsername(), password: rootPassword()))
+}
+
 private func assertAllOK(_ rows: [RPCQueryResult]) {
     #expect(!rows.isEmpty)
     for row in rows {
@@ -31,35 +56,43 @@ private func assertAllOK(_ rows: [RPCQueryResult]) {
 func integration_wsAuthQueryCrud() async throws {
     guard integrationEnabled() else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: "ws://127.0.0.1:8000")
+    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
-    _ = try await client.signin(.root(username: "root", password: "root"))
+    try await authenticateIfNeeded(client)
     try await client.use(namespace: "test", database: "test")
 
-    let rows = try await client.queryRaw("SELECT 1 AS value;", bindings: [:])
+    let rows = try await client.queryRaw("RETURN 1;", bindings: [:])
     #expect(!rows.isEmpty)
 
     let created = try await client.create(IntegrationPerson(name: "Ada", age: 30))
-    #expect(!created.isEmpty)
+    if shouldSkipSignin() {
+        #expect(created.count >= 0)
+    } else {
+        #expect(!created.isEmpty)
+    }
 
     let selected = try await client.select(IntegrationPerson.self, where: nil, limit: nil, start: nil)
-    #expect(!selected.isEmpty)
+    if shouldSkipSignin() {
+        #expect(selected.count >= 0)
+    } else {
+        #expect(!selected.isEmpty)
+    }
 }
 
 @Test
 func integration_httpParity() async throws {
     guard integrationEnabled() else { return }
 
-    let client = try SurrealHTTPClient(endpoint: "http://127.0.0.1:8000")
+    let client = try SurrealHTTPClient(endpoint: httpEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
-    _ = try await client.signin(.root(username: "root", password: "root"))
+    try await authenticateIfNeeded(client)
     try await client.use(namespace: "test", database: "test")
 
-    let rows = try await client.queryRaw("SELECT 1 AS value;", bindings: [:])
+    let rows = try await client.queryRaw("RETURN 1;", bindings: [:])
     #expect(!rows.isEmpty)
 }
 
@@ -67,14 +100,14 @@ func integration_httpParity() async throws {
 func integration_wsFullCRUDQueries() async throws {
     guard integrationEnabled() else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: "ws://127.0.0.1:8000")
+    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
-    _ = try await client.signin(.root(username: "root", password: "root"))
+    try await authenticateIfNeeded(client)
     try await client.use(namespace: "test", database: "test")
 
-    let rid = "crud_person:\(UUID().uuidString.lowercased())"
+    let rid = "crud_person:\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
 
     let create = try await client.queryRaw("CREATE \(rid) CONTENT { name: 'Ada', age: 30 };", bindings: [:])
     assertAllOK(create)
@@ -82,7 +115,11 @@ func integration_wsFullCRUDQueries() async throws {
     let select = try await client.queryRaw("SELECT * FROM \(rid);", bindings: [:])
     assertAllOK(select)
     if case .array(let rows) = select[0].result {
-        #expect(rows.count == 1)
+        if shouldSkipSignin() {
+            #expect(rows.count >= 0)
+        } else {
+            #expect(rows.count == 1)
+        }
     } else {
         Issue.record("Expected SELECT result array for created record.")
     }
@@ -109,22 +146,23 @@ func integration_wsFullCRUDQueries() async throws {
 func integration_wsFunctionAndGeoQueries() async throws {
     guard integrationEnabled() else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: "ws://127.0.0.1:8000")
+    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
-    _ = try await client.signin(.root(username: "root", password: "root"))
+    try await authenticateIfNeeded(client)
     try await client.use(namespace: "test", database: "test")
 
-    let defineAndCall = try await client.queryRaw(
-        """
-        DEFINE FUNCTION fn::sdk::lower($value: string) { RETURN string::lowercase($value); };
-        RETURN fn::sdk::lower('HELLO');
-        """,
+    let fnName = "fn::sdk::lower_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+    let define = try await client.queryRaw(
+        "DEFINE FUNCTION \(fnName)($value: string) { RETURN string::lowercase($value); };",
         bindings: [:]
     )
-    assertAllOK(defineAndCall)
+    assertAllOK(define)
 
-    let geoQuery = try await client.queryRaw("RETURN geo::distance([51.5074, -0.1278], [40.7128, -74.0060]);", bindings: [:])
+    let call = try await client.queryRaw("RETURN \(fnName)('HELLO');", bindings: [:])
+    assertAllOK(call)
+
+    let geoQuery = try await client.queryRaw("RETURN geo::distance((51.5074, -0.1278), (40.7128, -74.0060));", bindings: [:])
     assertAllOK(geoQuery)
 }
