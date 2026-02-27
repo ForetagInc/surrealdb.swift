@@ -1,26 +1,54 @@
 // swift-tools-version: 6.2
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import CompilerPluginSupport
 import PackageDescription
 
 let package = Package(
     name: "SurrealDB",
+    platforms: [
+        .iOS(.v17),
+        .macOS(.v14),
+        .tvOS(.v17),
+        .watchOS(.v10),
+        .visionOS(.v1)
+    ],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
-        .library(
-            name: "SurrealDB",
-            targets: ["SurrealDB"]
-        ),
+        .library(name: "SurrealDB", targets: ["SurrealDB"])
+    ],
+    dependencies: [
+        .package(url: "https://github.com/outfoxx/PotentCodables.git", from: "3.5.0"),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "602.0.0")
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "SurrealDB"
+            name: "SurrealDBMacros"
+        ),
+        .macro(
+            name: "SurrealDBMacroPlugin",
+            dependencies: [
+                "SurrealDBMacros",
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax")
+            ]
+        ),
+        .target(
+            name: "SurrealDB",
+            dependencies: [
+                "SurrealDBMacros",
+                "SurrealDBMacroPlugin",
+                .product(name: "PotentCodables", package: "PotentCodables")
+            ]
         ),
         .testTarget(
             name: "SurrealDBTests",
-            dependencies: ["SurrealDB"]
-        ),
+            dependencies: [
+                "SurrealDB",
+                "SurrealDBMacroPlugin",
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
+            ]
+        )
     ]
 )

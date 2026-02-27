@@ -1,0 +1,58 @@
+import Foundation
+
+actor HTTPRPCEngine: RPCEngine {
+    private let endpoint: URL
+    private let urlSession: URLSession
+    private let options: SurrealClientOptions
+    private var isConnected = false
+
+    init(endpoint: URL, options: SurrealClientOptions, urlSession: URLSession = .shared) {
+        self.endpoint = Endpoint.asHTTP(endpoint)
+        self.options = options
+        self.urlSession = urlSession
+    }
+
+    func connect() async throws {
+        isConnected = true
+    }
+
+    func close() async {
+        isConnected = false
+    }
+
+    func send(_ request: RPCRequest, session: SessionContext) async throws -> RPCResponseEnvelope {
+        guard isConnected else {
+            throw SurrealError.notConnected
+        }
+
+        var urlRequest = URLRequest(url: endpoint, timeoutInterval: options.requestTimeout)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/cbor", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("application/cbor", forHTTPHeaderField: "Accept")
+
+        if let namespace = session.namespace {
+            urlRequest.setValue(namespace, forHTTPHeaderField: "Surreal-NS")
+        }
+        if let database = session.database {
+            urlRequest.setValue(database, forHTTPHeaderField: "Surreal-DB")
+        }
+        if let token = session.accessToken {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        urlRequest.httpBody = try CBORSurrealCodec.encode(request)
+
+        let (data, response) = try await urlSession.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SurrealError.invalidResponse("Expected HTTPURLResponse.")
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let message = String(data: data, encoding: .utf8) ?? "HTTP \(httpResponse.statusCode)"
+            throw SurrealError.invalidResponse(message)
+        }
+
+        return try CBORSurrealCodec.decodeRPCEnvelope(data)
+    }
+}
