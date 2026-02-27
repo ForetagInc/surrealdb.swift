@@ -1,5 +1,9 @@
 # SurrealDB Swift SDK
 
+## Requirements
+
+- Swift 6.1
+
 ## Features
 
 - Supports iOS and iPadOS with CarPlay
