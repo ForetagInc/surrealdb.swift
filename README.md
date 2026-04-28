@@ -2,6 +2,8 @@
 
 A Swift SDK for [SurrealDB](https://surrealdb.com) with full async/await support, type-safe query macros, and live query streaming.
 
+> **Alpha release** - this SDK is in early development and the public API is subject to breaking changes without notice.
+
 ## Requirements
 
 - Swift 6.1+
@@ -530,4 +532,4 @@ Integration environment variables:
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 - see [LICENSE](LICENSE).
