@@ -1,7 +1,5 @@
 # SurrealDB Swift SDK
 
-> Alpha - Not tested for Production yet
-
 ## Requirements
 
 - Swift 6.1
@@ -28,7 +26,7 @@
 Add:
 
 ```swift
-.package(url: "https://github.com/ForetagInc/surrealdb.swift.git", from: "0.1.0"),
+.package(url: "https://github.com/surrealdb/surrealdb.swift.git", from: "0.1.0"),
 ```
 
 to your `dependencies` array in your `Package.swift` file.
