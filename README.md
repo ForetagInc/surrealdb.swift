@@ -7,7 +7,7 @@ A Swift SDK for [SurrealDB](https://surrealdb.com) with full async/await support
 ## Requirements
 
 - Swift 6.1+
-- SurrealDB v3+ (designed for v3.0.1)
+- SurrealDB v3+
 
 ## Platforms
 
