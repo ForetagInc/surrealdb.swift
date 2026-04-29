@@ -1,32 +1,32 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches:
-      - '**'
+    pull_request:
+    push:
+        branches:
+            - "**"
 
 jobs:
-  unit-tests:
-    name: Unit Tests
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-      - name: Unit tests
-        run: ./scripts/test-unit.sh
+    unit-tests:
+        name: Unit Tests
+        runs-on: macos-15
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+            - name: Select Xcode
+              run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            - name: Unit tests
+              run: ./scripts/test-unit.sh
 
-  integration-tests:
-    name: Integration Tests
-    runs-on: macos-15
-    needs: unit-tests
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/v') || startsWith(github.ref, 'refs/heads/version/')
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-      - name: Integration tests
-        env:
-          SURREALDB_INTEGRATION_MODE: local
-        run: ./scripts/test-integration.sh
+    integration-tests:
+        name: Integration Tests
+        runs-on: macos-15
+        needs: unit-tests
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/v') || startsWith(github.ref, 'refs/heads/version/')
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+            - name: Select Xcode
+              run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            - name: Integration tests
+              env:
+                  SURREALDB_INTEGRATION_MODE: local
+              run: ./scripts/test-integration.sh
