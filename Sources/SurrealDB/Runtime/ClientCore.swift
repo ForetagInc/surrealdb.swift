@@ -232,6 +232,7 @@ actor SurrealClientCore<Engine: RPCEngine> {
         as type: T.Type
     ) throws -> [T] {
         var decoded: [T] = []
+        var errors: [QueryErrorDetail] = []
 
         for (index, row) in results.enumerated() {
             if row.status == .err {
@@ -241,7 +242,8 @@ actor SurrealClientCore<Engine: RPCEngine> {
                 } else {
                     message = "Unknown query error"
                 }
-                throw SurrealError.queryError(index: index, message: message, details: row.details)
+                errors.append(QueryErrorDetail(index: index, message: message, details: row.details))
+                continue
             }
 
             switch row.result {
@@ -254,6 +256,10 @@ actor SurrealClientCore<Engine: RPCEngine> {
             default:
                 decoded.append(try row.result.decode(T.self))
             }
+        }
+
+        if !errors.isEmpty {
+            throw SurrealError.queryErrors(errors)
         }
 
         return decoded

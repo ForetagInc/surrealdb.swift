@@ -49,8 +49,8 @@ actor HTTPRPCEngine: RPCEngine {
         }
 
         guard httpResponse.statusCode == 200 else {
-            let message = String(data: data, encoding: .utf8) ?? "HTTP \(httpResponse.statusCode)"
-            throw SurrealError.invalidResponse(message)
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw SurrealError.httpError(statusCode: httpResponse.statusCode, body: body)
         }
 
         return try CBORSurrealCodec.decodeRPCEnvelope(data)

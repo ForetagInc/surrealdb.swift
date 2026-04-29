@@ -4,8 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - 'v**'
-      - 'version/**'
+      - '**'
 
 jobs:
   unit-tests:
@@ -22,6 +21,7 @@ jobs:
     name: Integration Tests
     runs-on: macos-15
     needs: unit-tests
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/v') || startsWith(github.ref, 'refs/heads/version/')
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode

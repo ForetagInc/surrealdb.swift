@@ -1,13 +1,21 @@
 import Foundation
 
+public struct QueryErrorDetail: Sendable, Hashable {
+    public let index: Int
+    public let message: String
+    public let details: SurrealValue?
+}
+
 public enum SurrealError: Error, Sendable {
     case invalidEndpoint(String)
     case notConnected
+    case connectionLost(cause: (any Error)?)
     case unsupportedFeature(String)
     case invalidCredentials(String)
     case invalidResponse(String)
+    case httpError(statusCode: Int, body: String)
     case serverError(RPCErrorObject)
-    case queryError(index: Int, message: String, details: SurrealValue?)
+    case queryErrors([QueryErrorDetail])
     case timeout
 
     public var message: String {
@@ -16,18 +24,78 @@ public enum SurrealError: Error, Sendable {
             return "Invalid endpoint: \(value)"
         case .notConnected:
             return "The client is not connected."
+        case .connectionLost(let cause):
+            if let cause {
+                return "Connection lost: \(cause.localizedDescription)"
+            }
+            return "Connection lost."
         case .unsupportedFeature(let feature):
             return "Unsupported feature: \(feature)"
         case .invalidCredentials(let message):
             return "Invalid credentials: \(message)"
         case .invalidResponse(let message):
             return "Invalid response: \(message)"
+        case .httpError(let code, let body) where !body.isEmpty:
+            return "HTTP \(code): \(body)"
+        case .httpError(let code, _):
+            return "HTTP \(code)"
         case .serverError(let payload):
             return payload.message
-        case .queryError(let index, let message, _):
-            return "Query statement #\(index) failed: \(message)"
+        case .queryErrors(let errors) where errors.count == 1:
+            let e = errors[0]
+            return "Query statement #\(e.index) failed: \(e.message)"
+        case .queryErrors(let errors):
+            let indices = errors.map { "#\($0.index)" }.joined(separator: ", ")
+            return "\(errors.count) query statements failed (at \(indices))"
         case .timeout:
             return "The request timed out."
+        }
+    }
+
+    public var isTransient: Bool {
+        switch self {
+        case .timeout, .connectionLost:
+            return true
+        case .httpError(let code, _):
+            return code == 429 || code == 503 || code == 504
+        default:
+            return false
+        }
+    }
+}
+
+extension SurrealError: LocalizedError {
+    public var errorDescription: String? { message }
+
+    public var failureReason: String? {
+        switch self {
+        case .serverError(let obj):
+            return obj.kind.map { "Server error kind: \($0)" }
+        case .queryErrors(let errors):
+            return errors.map { "#\($0.index): \($0.message)" }.joined(separator: "\n")
+        case .connectionLost(let cause):
+            return cause?.localizedDescription
+        case .httpError(let code, let body) where !body.isEmpty:
+            return "HTTP \(code): \(body)"
+        default:
+            return nil
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .invalidEndpoint:
+            return "Check that the endpoint URL is well-formed and uses ws://, wss://, http://, or https://."
+        case .notConnected:
+            return "Call connect() before performing operations."
+        case .connectionLost:
+            return "Check network connectivity and retry."
+        case .httpError(401, _):
+            return "Re-authenticate and retry."
+        case .timeout:
+            return "Retry the operation or increase requestTimeout in SurrealClientOptions."
+        default:
+            return nil
         }
     }
 }

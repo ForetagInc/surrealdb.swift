@@ -22,13 +22,6 @@ iOS 17+ · macOS 14+ · tvOS 17+ · watchOS 10+ · visionOS 1+
 - Root, namespace, database, and record-access authentication
 - Automatic WebSocket reconnection
 
-## Roadmap
-
-- [ ] Standalone Query Builder
-- [ ] Advanced Error Handling
-- [ ] Embedded / In-memory SurrealDB
-- [ ] File Uploads (Buckets)
-
 ---
 
 ## Installation

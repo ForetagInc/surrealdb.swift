@@ -213,7 +213,7 @@ actor WebSocketRPCEngine: LiveRPCEngine {
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
 
-        failPending(with: error)
+        failPending(with: SurrealError.connectionLost(cause: error))
         finishAllLiveStreams()
 
         guard !closedByClient else {
