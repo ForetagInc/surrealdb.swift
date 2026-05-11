@@ -30,33 +30,90 @@ private struct IntegrationLivePerson: SurrealModel, Codable, Sendable {
     }
 }
 
-private func integrationEnabled() -> Bool {
-    ProcessInfo.processInfo.environment["SURREALDB_RUN_INTEGRATION"] == "1"
+private enum IntegrationEnv {
+    static func value(_ key: String) -> String? {
+        let raw = ProcessInfo.processInfo.environment[key]
+        guard let raw, !raw.isEmpty else { return nil }
+        return raw
+    }
+
+    static var enabled: Bool {
+        value("SURREALDB_RUN_INTEGRATION") == "1"
+    }
+
+    /// `host[:port]` or a full URL. Bare host strings become `ws://host` /
+    /// `http://host`; full URLs are passed through as-is for the matching
+    /// transport.
+    static var host: String {
+        value("SURREALDB_HOST") ?? "127.0.0.1:8000"
+    }
+
+    static var namespace: String {
+        value("SURREALDB_NAMESPACE") ?? "test"
+    }
+
+    static var database: String {
+        value("SURREALDB_NAME") ?? "test"
+    }
+
+    static var user: String? { value("SURREALDB_USER") }
+    static var password: String? { value("SURREALDB_PASSWORD") }
+
+    static var authLevel: AuthLevel {
+        AuthLevel(value("SURREALDB_AUTH_LEVEL"))
+    }
+
+    enum AuthLevel {
+        case root, namespace, database
+
+        init(_ raw: String?) {
+            switch raw?.lowercased() {
+            case "namespace", "ns": self = .namespace
+            case "database", "db": self = .database
+            case "root", nil, "": self = .root
+            default: self = .root
+            }
+        }
+    }
+
+    static func endpoint(scheme: String) -> String {
+        let host = host
+        if host.contains("://") { return host }
+        return "\(scheme)://\(host)"
+    }
+
+    static var hasCredentials: Bool {
+        user != nil && password != nil
+    }
 }
 
-private func wsEndpoint() -> String {
-    ProcessInfo.processInfo.environment["SURREALDB_WS_ENDPOINT"] ?? "ws://127.0.0.1:8000"
-}
-
-private func httpEndpoint() -> String {
-    ProcessInfo.processInfo.environment["SURREALDB_HTTP_ENDPOINT"] ?? "http://127.0.0.1:8000"
-}
-
-private func rootUsername() -> String {
-    ProcessInfo.processInfo.environment["SURREALDB_ROOT_USER"] ?? "root"
-}
-
-private func rootPassword() -> String {
-    ProcessInfo.processInfo.environment["SURREALDB_ROOT_PASS"] ?? "root"
-}
-
-private func shouldSkipSignin() -> Bool {
-    ProcessInfo.processInfo.environment["SURREALDB_SKIP_SIGNIN"] == "1"
-}
+private func wsEndpoint() -> String { IntegrationEnv.endpoint(scheme: "ws") }
+private func httpEndpoint() -> String { IntegrationEnv.endpoint(scheme: "http") }
+private func shouldSkipSignin() -> Bool { !IntegrationEnv.hasCredentials }
 
 private func authenticateIfNeeded(_ client: some SurrealQueryable) async throws {
-    guard !shouldSkipSignin() else { return }
-    _ = try await client.signin(.root(username: rootUsername(), password: rootPassword()))
+    guard let user = IntegrationEnv.user, let password = IntegrationEnv.password else {
+        return
+    }
+    let credentials: SignInCredentials
+    switch IntegrationEnv.authLevel {
+    case .root:
+        credentials = .root(username: user, password: password)
+    case .namespace:
+        credentials = .namespace(
+            namespace: IntegrationEnv.namespace,
+            username: user,
+            password: password
+        )
+    case .database:
+        credentials = .database(
+            namespace: IntegrationEnv.namespace,
+            database: IntegrationEnv.database,
+            username: user,
+            password: password
+        )
+    }
+    _ = try await client.signin(credentials)
 }
 
 private func awaitTaskValue<T: Sendable>(
@@ -92,14 +149,14 @@ private func assertAllOK(_ rows: [RPCQueryResult]) {
 
 @Test
 func integration_wsAuthQueryCrud() async throws {
-    guard integrationEnabled() else { return }
+    guard IntegrationEnv.enabled else { return }
 
     let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
     try await authenticateIfNeeded(client)
-    try await client.use(namespace: "test", database: "test")
+    try await client.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
 
     let rows = try await client.queryRaw("RETURN 1;", bindings: [:])
     #expect(!rows.isEmpty)
@@ -121,14 +178,14 @@ func integration_wsAuthQueryCrud() async throws {
 
 @Test
 func integration_httpParity() async throws {
-    guard integrationEnabled() else { return }
+    guard IntegrationEnv.enabled else { return }
 
     let client = try SurrealHTTPClient(endpoint: httpEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
     try await authenticateIfNeeded(client)
-    try await client.use(namespace: "test", database: "test")
+    try await client.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
 
     let rows = try await client.queryRaw("RETURN 1;", bindings: [:])
     #expect(!rows.isEmpty)
@@ -136,14 +193,14 @@ func integration_httpParity() async throws {
 
 @Test
 func integration_wsFullCRUDQueries() async throws {
-    guard integrationEnabled() else { return }
+    guard IntegrationEnv.enabled else { return }
 
     let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
     try await authenticateIfNeeded(client)
-    try await client.use(namespace: "test", database: "test")
+    try await client.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
 
     let rid = "crud_person:\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
 
@@ -182,14 +239,14 @@ func integration_wsFullCRUDQueries() async throws {
 
 @Test
 func integration_wsFunctionAndGeoQueries() async throws {
-    guard integrationEnabled() else { return }
+    guard IntegrationEnv.enabled else { return }
 
     let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
     try await authenticateIfNeeded(client)
-    try await client.use(namespace: "test", database: "test")
+    try await client.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
 
     let fnName = "fn::sdk::lower_\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
     let define = try await client.queryRaw(
@@ -207,14 +264,14 @@ func integration_wsFunctionAndGeoQueries() async throws {
 
 @Test
 func integration_wsLiveQueries() async throws {
-    guard integrationEnabled() else { return }
+    guard IntegrationEnv.enabled else { return }
 
     let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
     try await authenticateIfNeeded(client)
-    try await client.use(namespace: "test", database: "test")
+    try await client.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
 
     let defineTable = try await client.queryRaw("DEFINE TABLE \(IntegrationLivePerson.surrealTable) SCHEMALESS;", bindings: [:])
     assertAllOK(defineTable)

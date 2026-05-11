@@ -15,9 +15,11 @@ iOS 17+ · macOS 14+ · tvOS 17+ · watchOS 10+ · visionOS 1+
 
 ## Features
 
-- HTTP and WebSocket transports
+- Pluggable transport engines (HTTP, WebSocket) with room for additional engines (e.g. embedded) down the line
+- Pluggable wire protocols (CBOR, JSON-RPC) — opt into either per-client
 - Type-safe CRUD via `@SurrealModel` macro and query DSL
 - Live queries over WebSocket via `AsyncStream`
+- Client-side transactions (`BEGIN; … COMMIT;`) with automatic binding-collision rewriting
 - Raw SQL queries with bound parameters
 - Root, namespace, database, and record-access authentication
 - Automatic WebSocket reconnection
@@ -134,6 +136,23 @@ let client = try SurrealWebSocketClient(
 try await client.connect()
 defer { Task { await client.close() } }
 ```
+
+### Wire Protocol
+
+Both clients default to SurrealDB's tagged CBOR encoding, which preserves all `SurrealValue` types (UUID, datetime, decimal, duration, record IDs, geometries, ranges, …) losslessly. JSON-RPC is also supported and may be preferable for environments where CBOR is harder to inspect.
+
+```swift
+// CBOR (default) — full fidelity
+let cbor = try SurrealWebSocketClient(endpoint: "ws://localhost:8000")
+
+// JSON-RPC — primitives only; SurrealDB-specific types are coerced to strings
+let json = try SurrealHTTPClient(
+    endpoint: "http://localhost:8000",
+    wireProtocol: .json
+)
+```
+
+The wire protocol controls both the HTTP `Content-Type` and the WebSocket sub-protocol negotiated during the handshake.
 
 ### Selecting a Namespace and Database
 
@@ -433,6 +452,46 @@ for row in results {
 
 ---
 
+## Transactions
+
+`transaction { tx in … }` bundles multiple statements into a single `BEGIN; … COMMIT;` query call. SurrealDB cancels the transaction server-side if any statement fails.
+
+```swift
+let results = try await client.transaction { tx in
+    tx.append(
+        "CREATE person CONTENT $content",
+        bindings: ["content": try .fromEncodable(Person(id: nil, name: "Ada", age: 30))]
+    )
+    tx.append(
+        "UPDATE person SET age = 31 WHERE name = $name",
+        bindings: ["name": .string("Ada")]
+    )
+}
+```
+
+Typed `SurrealQuery<T>` values (including those produced by the macros and DSL) can be appended directly:
+
+```swift
+try await client.transaction { tx in
+    tx.append(#create(Person.self))
+    tx.append(#update(Person.self, where: Person.Fields.name == "Ada"))
+}
+```
+
+If two statements share a binding name with different values, the second one is automatically renamed (`$content` → `$content_tx1`) and its SQL is rewritten to match — so you can freely combine independently built queries.
+
+To abort before flushing, simply throw from the closure; no `BEGIN` is sent.
+
+```swift
+try await client.transaction { tx in
+    tx.append(#create(Person.self))
+    if shouldAbort { throw MyError.cancelled } // nothing is sent to the server
+    tx.append(#update(Person.self))
+}
+```
+
+---
+
 ## SurrealValue
 
 `SurrealValue` is the SDK's universal value type for working with raw SurrealDB data.
@@ -513,13 +572,14 @@ SURREALDB_RUN_INTEGRATION=1 swift test
 
 Integration environment variables:
 
-| Variable | Default |
-|---|---|
-| `SURREALDB_WS_ENDPOINT` | `ws://127.0.0.1:8000` |
-| `SURREALDB_HTTP_ENDPOINT` | `http://127.0.0.1:8000` |
-| `SURREALDB_ROOT_USER` | `root` |
-| `SURREALDB_ROOT_PASS` | `root` |
-| `SURREALDB_SKIP_SIGNIN` | _(unset)_ |
+| Variable | Default | Notes |
+|---|---|---|
+| `SURREALDB_HOST` | `127.0.0.1:8000` | `host[:port]` or a full URL with scheme. WS/HTTP endpoints are derived. |
+| `SURREALDB_NAMESPACE` | `test` | Passed to `client.use(namespace:database:)`. |
+| `SURREALDB_NAME` | `test` | Database name. |
+| `SURREALDB_USER` | _(unset)_ | If unset, sign-in is skipped. |
+| `SURREALDB_PASSWORD` | _(unset)_ | If unset, sign-in is skipped. |
+| `SURREALDB_AUTH_LEVEL` | `root` | One of `root`, `namespace` / `ns`, `database` / `db`. |
 
 ---
 
