@@ -5,6 +5,7 @@ actor WebSocketRPCEngine: LiveRPCEngine {
     private let urlSession: URLSession
     private let clientOptions: SurrealClientOptions
     private let wsOptions: SurrealWebSocketOptions
+    private let codec: any WireCodec
 
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
@@ -21,11 +22,13 @@ actor WebSocketRPCEngine: LiveRPCEngine {
         endpoint: URL,
         clientOptions: SurrealClientOptions,
         wsOptions: SurrealWebSocketOptions,
+        codec: any WireCodec,
         urlSession: URLSession = .shared
     ) {
         self.endpoint = Endpoint.asWebSocket(endpoint)
         self.clientOptions = clientOptions
         self.wsOptions = wsOptions
+        self.codec = codec
         self.urlSession = urlSession
     }
 
@@ -62,7 +65,7 @@ actor WebSocketRPCEngine: LiveRPCEngine {
             pending[request.id] = continuation
             Task {
                 do {
-                    let payload = try CBORSurrealCodec.encode(request)
+                    let payload = try codec.encode(request)
                     try await self.rawSend(payload, requestID: request.id)
                 } catch {
                     self.failPending(requestID: request.id, with: error)
@@ -90,7 +93,7 @@ actor WebSocketRPCEngine: LiveRPCEngine {
     }
 
     private func establishSocket() async throws {
-        let socket = urlSession.webSocketTask(with: endpoint, protocols: ["cbor"])
+        let socket = urlSession.webSocketTask(with: endpoint, protocols: codec.websocketSubprotocols)
         task = socket
         socket.resume()
 
@@ -187,14 +190,14 @@ actor WebSocketRPCEngine: LiveRPCEngine {
     }
 
     private func handleIncoming(_ data: Data) async throws {
-        let response = try CBORSurrealCodec.decodeRPCEnvelope(data)
+        let response = try codec.decodeEnvelope(data)
 
         if let id = response.id, let continuation = pending.removeValue(forKey: id) {
             continuation.resume(returning: response)
             return
         }
 
-        guard let liveEvent = CBORSurrealCodec.decodeLiveWireEvent(from: response) else {
+        guard let liveEvent = codec.decodeLiveEvent(from: response) else {
             return
         }
 

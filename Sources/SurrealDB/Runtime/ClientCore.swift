@@ -76,7 +76,14 @@ actor SurrealClientCore<Engine: RPCEngine> {
             ]
         )
 
-        return try CBORSurrealCodec.decodeQueryResults(from: response)
+        return try RPCWire.decodeQueryResults(from: response)
+    }
+
+    func transaction(_ build: (SurrealTransaction) throws -> Void) async throws -> [RPCQueryResult] {
+        let tx = SurrealTransaction()
+        try build(tx)
+        let (sql, bindings) = tx.build()
+        return try await queryRaw(sql, bindings: bindings)
     }
 
     func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>) async throws -> [T] {

@@ -5,11 +5,16 @@ public actor SurrealHTTPClient: SurrealQueryable {
 
     public init(
         endpoint: String,
+        wireProtocol: SurrealWireProtocol = .cbor,
         options: SurrealClientOptions = .init(),
         session: SessionContext = .init()
     ) throws {
         let rpcURL = try Endpoint.normalizedRPCURL(from: endpoint)
-        let transport = HTTPRPCEngine(endpoint: rpcURL, options: options)
+        let transport = HTTPRPCEngine(
+            endpoint: rpcURL,
+            options: options,
+            codec: makeWireCodec(wireProtocol)
+        )
         self.core = SurrealClientCore(engine: transport, sessionContext: session)
     }
 
@@ -47,6 +52,12 @@ public actor SurrealHTTPClient: SurrealQueryable {
 
     public func queryRaw(_ sql: String, bindings: [String: SurrealValue] = [:]) async throws -> [RPCQueryResult] {
         try await core.queryRaw(sql, bindings: bindings)
+    }
+
+    public func transaction(
+        _ build: @Sendable (SurrealTransaction) throws -> Void
+    ) async throws -> [RPCQueryResult] {
+        try await core.transaction(build)
     }
 
     public func select<Model: SurrealModel & Decodable & Sendable>(
@@ -126,6 +137,7 @@ public actor SurrealWebSocketClient: SurrealLiveQueryable {
 
     public init(
         endpoint: String,
+        wireProtocol: SurrealWireProtocol = .cbor,
         options: SurrealClientOptions = .init(),
         websocketOptions: SurrealWebSocketOptions = .init(),
         session: SessionContext = .init()
@@ -134,7 +146,8 @@ public actor SurrealWebSocketClient: SurrealLiveQueryable {
         let transport = WebSocketRPCEngine(
             endpoint: rpcURL,
             clientOptions: options,
-            wsOptions: websocketOptions
+            wsOptions: websocketOptions,
+            codec: makeWireCodec(wireProtocol)
         )
         self.core = SurrealClientCore(engine: transport, sessionContext: session)
     }
@@ -173,6 +186,12 @@ public actor SurrealWebSocketClient: SurrealLiveQueryable {
 
     public func queryRaw(_ sql: String, bindings: [String: SurrealValue] = [:]) async throws -> [RPCQueryResult] {
         try await core.queryRaw(sql, bindings: bindings)
+    }
+
+    public func transaction(
+        _ build: @Sendable (SurrealTransaction) throws -> Void
+    ) async throws -> [RPCQueryResult] {
+        try await core.transaction(build)
     }
 
     public func select<Model: SurrealModel & Decodable & Sendable>(

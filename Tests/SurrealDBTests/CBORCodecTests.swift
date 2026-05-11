@@ -37,7 +37,7 @@ func cborCodec_encodesRequestAndDecodesResponse() throws {
     #expect(envelope.id == "1")
     #expect(envelope.error == nil)
 
-    let queryResults = try CBORSurrealCodec.decodeQueryResults(from: envelope.result ?? .null)
+    let queryResults = try RPCWire.decodeQueryResults(from: envelope.result ?? .null)
     #expect(queryResults.count == 1)
     #expect(queryResults[0].status == .ok)
 }
@@ -74,7 +74,7 @@ func cborCodec_decodesTopLevelLiveNotificationEnvelope() throws {
 
     let notificationData = try CBORSerialization.data(from: .map(notificationMap))
     let envelope = try CBORSurrealCodec.decodeRPCEnvelope(notificationData)
-    let event = CBORSurrealCodec.decodeLiveWireEvent(from: envelope)
+    let event = RPCWire.decodeLiveEvent(from: envelope)
 
     #expect(event != nil)
     #expect(event?.action == .create)
