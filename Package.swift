@@ -13,7 +13,8 @@ let package = Package(
         .visionOS(.v1)
     ],
     products: [
-        .library(name: "SurrealDB", targets: ["SurrealDB"])
+        .library(name: "SurrealDB", targets: ["SurrealDB"]),
+        .library(name: "Spectron", targets: ["Spectron"])
     ],
     dependencies: [
         .package(url: "https://github.com/outfoxx/PotentCodables.git", from: "3.5.0"),
@@ -49,6 +50,13 @@ let package = Package(
                 "SurrealDBMacroPlugin",
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax")
             ]
+        ),
+        .target(
+            name: "Spectron"
+        ),
+        .testTarget(
+            name: "SpectronTests",
+            dependencies: ["Spectron"]
         )
     ]
 )

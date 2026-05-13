@@ -556,6 +556,206 @@ SessionContext(
 
 ---
 
+## Spectron
+
+The package also ships a `Spectron` library product, a client for [Spectron](https://surrealdb.com/platform/spectron), SurrealDB's memory and knowledge API. Add it to your target alongside `SurrealDB` (or on its own):
+
+```swift
+.product(name: "Spectron", package: "surrealdb.swift")
+```
+
+```swift
+import Spectron
+
+let memory = try Spectron(
+    context: "acme-prod",
+    endpoint: "https://api.spectron.example",
+    apiKey: "sk-spec-..."
+)
+
+let hits = try await memory.knowledge.query("returns policy", k: 5)
+```
+
+The client is `Sendable` and built on Swift `async/await`. The underlying `SpectronTransport` is an actor backed by `URLSession`, and you can swap in your own `HTTPClient` for testing.
+
+### Knowledge
+
+Documents:
+
+```swift
+let doc = try await memory.knowledge.upload(
+    file: .fileURL(URL(fileURLWithPath: "returns.pdf"), filename: nil, mimeType: "application/pdf"),
+    title: "Returns Policy",
+    profile: .multimodalBalanced,
+    scope: ["org": "anneal"]
+)
+
+_ = try await memory.knowledge.get(doc.id)
+_ = try await memory.knowledge.replace(documentId: doc.id, file: .fileURL(URL(fileURLWithPath: "returns_v2.pdf"), filename: nil, mimeType: "application/pdf"))
+_ = try await memory.knowledge.raw(doc.id)
+_ = try await memory.knowledge.chunks(doc.id, page: 0, pageSize: 50)
+_ = try await memory.knowledge.list(status: "ready", mimeType: "application/pdf")
+_ = try await memory.knowledge.related(doc.id)
+try await memory.knowledge.delete(doc.id)
+```
+
+Query:
+
+```swift
+let hits = try await memory.knowledge.query(
+    "what is the return window for unopened items?",
+    mode: .hybridGraph,
+    k: 10,
+    threshold: 0.5,
+    vectorWeight: 0.5,
+    rrfK: 60,
+    graphAlpha: 0.3,
+    graphEdges: ["knowledge_has_keyword", "knowledge_relates_to"],
+    graphDepth: 2,
+    expandGraph: true,
+    filter: QueryFilter(mimeType: ["application/pdf"], scope: ["org": "anneal"])
+)
+```
+
+Keywords and nodes:
+
+```swift
+_ = try await memory.knowledge.keywords.list(minDocumentCount: 2, sort: "-document_count", q: "return")
+_ = try await memory.knowledge.keywords.search("refund policies", k: 10, threshold: 0.6)
+_ = try await memory.knowledge.keywords.forDocument(doc.id)
+
+try await memory.knowledge.nodes.upsert(
+    nodes: [
+        KnowledgeNodeUpsertRow(kind: "product", slug: "airpods_pro_2", title: "AirPods Pro 2",
+                               content: ["price": .int(249), "category": .string("Audio")]),
+        KnowledgeNodeUpsertRow(kind: "policy", slug: "returns", title: "Returns",
+                               content: ["duration": .string("30 days")])
+    ],
+    relations: [
+        KnowledgeLinkUpsert(label: "covered_by",
+                            to: KnowledgeLinkTarget(kind: "policy", slug: "returns"))
+    ],
+    scope: ["org": "apple"]
+)
+```
+
+Traversal:
+
+```swift
+_ = try await memory.knowledge.traverse(
+    start: [TraverseStart(type: "document", id: doc.id)],
+    edges: ["knowledge_has_keyword", "knowledge_relates_to"],
+    maxDepth: 2
+)
+
+_ = try await memory.knowledge.traverseRecursive(
+    start: TraverseStart(type: "knowledge", kind: "product", slug: "airpods_pro_2"),
+    edge: "knowledge_relates_to",
+    maxDepth: 3
+)
+```
+
+### Sessions
+
+Drive the chat loop with a session:
+
+```swift
+let session = try await memory.sessions.create(scope: ["user": "tobie"])
+
+_ = try await session.turn(role: .user, content: "I just got promoted to CTO")
+
+let ctx = try await session.context("What is Tobie's role?")
+let reply = try await myLLM.chat(system: ctx.context, user: userMessage)
+_ = try await session.turn(role: .assistant, content: reply)
+
+_ = try await session.turns()
+try await session.close()
+```
+
+Or let Spectron run the loop:
+
+```swift
+let reply = try await session.chat("What do you know about me?")
+```
+
+### One-shot retrieval, state, profile, entities
+
+```swift
+_ = try await memory.query("What role does Christian have?", k: 10)
+_ = try await memory.context("brief on tobie", k: 10)
+
+_ = try await memory.state()
+_ = try await memory.profile()
+
+_ = try await memory.entities.list(type: "Person")
+_ = try await memory.entities.get(type: "Person", name: "christian_battaglia")
+_ = try await memory.entities.history(type: "Person", name: "christian_battaglia", key: "role")
+try await memory.entities.delete(type: "Person", name: "christian_battaglia")
+```
+
+`entities.delete` is a soft delete.
+
+### Reflect, forget, lifecycle, traces
+
+```swift
+_ = try await memory.reflect("patterns in customer complaints this month?", persist: true)
+_ = try await memory.forget("anything about my old job")
+
+try await memory.lifecycle.expire()
+try await memory.lifecycle.decay()
+
+_ = try await memory.traces.list(limit: 50)
+_ = try await memory.traces.get("decision_trace:abc123")
+_ = try await memory.traces.stats()
+```
+
+### Errors
+
+All failures throw `SpectronError`, a single struct carrying `status`, `title`, `detail`, `typeURI`, `instance`, `extensions`, and `retryAfter`. The `kind` field maps the HTTP status to one of `.base`, `.auth`, `.scope`, `.notFound`, `.validation`, `.rateLimit`, or `.server`.
+
+```swift
+do {
+    _ = try await memory.knowledge.get("doc:missing")
+} catch let error as SpectronError where error.isNotFound {
+    print(error.status, error.detail ?? "")
+} catch let error as SpectronError where error.isRateLimit {
+    print("retry after", error.retryAfter ?? 0, "seconds")
+}
+```
+
+| Status | `kind` |
+|---|---|
+| 400, 422 | `.validation` |
+| 401 | `.auth` |
+| 403 | `.scope` |
+| 404 | `.notFound` |
+| 429 | `.rateLimit` (with `retryAfter`) |
+| 5xx | `.server` |
+
+### Retries, timeouts, scope
+
+`GET` requests retry on connection errors and 5xx responses with backoff 250ms, 500ms, 1s (up to `maxRetries`, default 3). Writes are never retried. Default request timeout is 30 seconds, overridable on the `Spectron` initialiser.
+
+Scope is a `[String: String]` dictionary on the API surface. The transport serialises it to the wire format `[{"key": "...", "value": "..."}]` and back. If you need the raw conversion:
+
+```swift
+let wire = Scope.serialise(["org": "anneal"])
+let back = Scope.deserialise(wire)
+```
+
+### Custom transport for testing
+
+`SpectronTransport` accepts any `HTTPClient`, so unit tests can replay canned responses without hitting the network:
+
+```swift
+let mock = MyMockHTTPClient()
+mock.enqueue(.json(["ok": true]))
+let transport = try SpectronTransport(endpoint: "https://example", apiKey: "k", client: mock, sleeper: { _ in })
+let client = Spectron(context: "ctx", transport: transport)
+```
+
+---
+
 ## Tests
 
 Run unit tests:
