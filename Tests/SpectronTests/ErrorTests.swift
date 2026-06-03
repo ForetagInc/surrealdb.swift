@@ -2,20 +2,7 @@ import Foundation
 import XCTest
 @testable import Spectron
 
-final class ErrorsAndScopeTests: XCTestCase {
-    func testSerialiseScopeRoundTrip() {
-        let payload = Scope.serialise(["org": "anneal", "user": "tobie"])
-        XCTAssertNotNil(payload)
-        let pairs = Set(payload!.map { Pair(key: $0["key"]!, value: $0["value"]!) })
-        XCTAssertEqual(pairs, [Pair(key: "org", value: "anneal"), Pair(key: "user", value: "tobie")])
-        XCTAssertEqual(Scope.deserialise(payload), ["org": "anneal", "user": "tobie"])
-    }
-
-    func testSerialiseScopeNonePassthrough() {
-        XCTAssertNil(Scope.serialise(nil))
-        XCTAssertEqual(Scope.deserialise(nil), [:])
-    }
-
+final class ErrorTests: XCTestCase {
     func testErrorFromResponseStatusMapping() {
         let cases: [(Int, SpectronError.Kind)] = [
             (400, .validation),
@@ -65,6 +52,17 @@ final class ErrorsAndScopeTests: XCTestCase {
         XCTAssertEqual(err.detail, "internal explosion")
     }
 
+    func testErrorReadsMessageField() {
+        // The end-user API returns `ApiErrorResponse { message }`.
+        let err = SpectronErrorFactory.fromResponse(
+            status: 404,
+            body: .object(["message": .string("document not found")]),
+            headers: [:]
+        )
+        XCTAssertEqual(err.kind, .notFound)
+        XCTAssertEqual(err.title, "document not found")
+    }
+
     func testBackoffScheduleCapped() {
         XCTAssertEqual(Retry.backoffSchedule(maxRetries: 0), [])
         XCTAssertEqual(Retry.backoffSchedule(maxRetries: 1), [0.25])
@@ -79,10 +77,5 @@ final class ErrorsAndScopeTests: XCTestCase {
         XCTAssertFalse(Retry.shouldRetry(method: "POST", status: 503, attempt: 0, maxRetries: 3))
         XCTAssertFalse(Retry.shouldRetry(method: "GET", status: 400, attempt: 0, maxRetries: 3))
         XCTAssertFalse(Retry.shouldRetry(method: "GET", status: 503, attempt: 3, maxRetries: 3))
-    }
-
-    private struct Pair: Hashable {
-        let key: String
-        let value: String
     }
 }

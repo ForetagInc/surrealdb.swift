@@ -573,36 +573,38 @@ let memory = try Spectron(
     apiKey: "sk-spec-..."
 )
 
-let hits = try await memory.knowledge.query("returns policy", k: 5)
+let hits = try await memory.documents.query("returns policy", k: 5)
 ```
 
 The client is `Sendable` and built on Swift `async/await`. The underlying `SpectronTransport` is an actor backed by `URLSession`, and you can swap in your own `HTTPClient` for testing.
 
-### Knowledge
+The surface is grouped into `documents` (Layer 0 knowledge), `memory` (retrieval, sessions, entities, facts, lifecycle, traces), and governance (`scopes`, `principals`). The most common memory operations are also exposed directly on the client.
 
-Documents:
+### Documents
+
+Documents are uploaded as multipart form data. Optional metadata (`title`, `source`) is sent as a JSON part ahead of the file; the file's MIME type is inferred from the `SpectronFile` you supply.
 
 ```swift
-let doc = try await memory.knowledge.upload(
+let doc = try await memory.documents.upload(
     file: .fileURL(URL(fileURLWithPath: "returns.pdf"), filename: nil, mimeType: "application/pdf"),
     title: "Returns Policy",
-    profile: .multimodalBalanced,
-    scope: ["org": "anneal"]
+    source: "https://example.com/returns"
 )
 
-_ = try await memory.knowledge.get(doc.id)
-_ = try await memory.knowledge.replace(documentId: doc.id, file: .fileURL(URL(fileURLWithPath: "returns_v2.pdf"), filename: nil, mimeType: "application/pdf"))
-_ = try await memory.knowledge.raw(doc.id)
-_ = try await memory.knowledge.chunks(doc.id, page: 0, pageSize: 50)
-_ = try await memory.knowledge.list(status: "ready", mimeType: "application/pdf")
-_ = try await memory.knowledge.related(doc.id)
-try await memory.knowledge.delete(doc.id)
+_ = try await memory.documents.get(doc.id)
+_ = try await memory.documents.replace(documentId: doc.id, file: .fileURL(URL(fileURLWithPath: "returns_v2.pdf"), filename: nil, mimeType: "application/pdf"))
+_ = try await memory.documents.raw(doc.id)
+_ = try await memory.documents.chunks(doc.id, page: 0, pageSize: 50)
+_ = try await memory.documents.keywordsFor(doc.id)
+_ = try await memory.documents.list(status: .ready, mimeType: "application/pdf")
+_ = try await memory.documents.recomputeLinks()
+try await memory.documents.delete(doc.id)
 ```
 
 Query:
 
 ```swift
-let hits = try await memory.knowledge.query(
+let hits = try await memory.documents.query(
     "what is the return window for unopened items?",
     mode: .hybridGraph,
     k: 10,
@@ -610,75 +612,72 @@ let hits = try await memory.knowledge.query(
     vectorWeight: 0.5,
     rrfK: 60,
     graphAlpha: 0.3,
-    graphEdges: ["knowledge_has_keyword", "knowledge_relates_to"],
+    graphEdges: [.knowledgeHasKeyword, .documentLink],
     graphDepth: 2,
     expandGraph: true,
-    filter: QueryFilter(mimeType: ["application/pdf"], scope: ["org": "anneal"])
+    useReranker: true,
+    filter: QueryFilter(documentIds: nil, mimeType: ["application/pdf"])
 )
 ```
 
-Keywords and nodes:
+Keywords:
 
 ```swift
-_ = try await memory.knowledge.keywords.list(minDocumentCount: 2, sort: "-document_count", q: "return")
-_ = try await memory.knowledge.keywords.search("refund policies", k: 10, threshold: 0.6)
-_ = try await memory.knowledge.keywords.forDocument(doc.id)
-
-try await memory.knowledge.nodes.upsert(
-    nodes: [
-        KnowledgeNodeUpsertRow(kind: "product", slug: "airpods_pro_2", title: "AirPods Pro 2",
-                               content: ["price": .int(249), "category": .string("Audio")]),
-        KnowledgeNodeUpsertRow(kind: "policy", slug: "returns", title: "Returns",
-                               content: ["duration": .string("30 days")])
-    ],
-    relations: [
-        KnowledgeLinkUpsert(label: "covered_by",
-                            to: KnowledgeLinkTarget(kind: "policy", slug: "returns"))
-    ],
-    scope: ["org": "apple"]
-)
+_ = try await memory.documents.keywords.list(minDocumentCount: 2, sort: "-document_count", q: "return")
+_ = try await memory.documents.keywords.search("refund policies", k: 10, threshold: 0.6)
+_ = try await memory.documents.keywords.get("return policy")
 ```
 
-Traversal:
+### Sessions and facts
+
+Facts are the ingestion path for memory. A fact can be free text (the server extracts entities, attributes, and relations) or a set of explicit triples.
 
 ```swift
-_ = try await memory.knowledge.traverse(
-    start: [TraverseStart(type: "document", id: doc.id)],
-    edges: ["knowledge_has_keyword", "knowledge_relates_to"],
-    maxDepth: 2
-)
+let session = try await memory.sessions.create(scope: ["user/tobie"])
 
-_ = try await memory.knowledge.traverseRecursive(
-    start: TraverseStart(type: "knowledge", kind: "product", slug: "airpods_pro_2"),
-    edge: "knowledge_relates_to",
-    maxDepth: 3
-)
-```
-
-### Sessions
-
-Drive the chat loop with a session:
-
-```swift
-let session = try await memory.sessions.create(scope: ["user": "tobie"])
-
-_ = try await session.turn(role: .user, content: "I just got promoted to CTO")
+_ = try await session.ingest(text: "I just got promoted to CTO", role: .user)
 
 let ctx = try await session.context("What is Tobie's role?")
 let reply = try await myLLM.chat(system: ctx.context, user: userMessage)
-_ = try await session.turn(role: .assistant, content: reply)
+_ = try await session.ingest(text: reply, role: .assistant)
 
 _ = try await session.turns()
 try await session.close()
 ```
 
-Or let Spectron run the loop:
+Ingest without a session, or in bulk, directly on the client:
+
+```swift
+_ = try await memory.facts.create(
+    triples: [
+        Triple(
+            entity: TripleEntity(type: "Person", name: "tobie"),
+            key: "role",
+            value: "CTO",
+            memoryCategory: .identity
+        )
+    ],
+    infer: .triples
+)
+
+_ = try await memory.facts.batch(
+    messages: [
+        BatchMessage(role: .user, content: "I work at SurrealDB"),
+        BatchMessage(role: .assistant, content: "Noted.")
+    ],
+    extract: .wholeConversation
+)
+```
+
+Or let Spectron run the managed chat loop, which retrieves context, replies, and persists the exchange in one call:
 
 ```swift
 let reply = try await session.chat("What do you know about me?")
+// or, scoped to a session id on the client:
+let reply = try await memory.chat("What do you know about me?", sessionId: session.id)
 ```
 
-### One-shot retrieval, state, profile, entities
+### Retrieval, state, profile, entities
 
 ```swift
 _ = try await memory.query("What role does Christian have?", k: 10)
@@ -695,29 +694,59 @@ try await memory.entities.delete(type: "Person", name: "christian_battaglia")
 
 `entities.delete` is a soft delete.
 
-### Reflect, forget, lifecycle, traces
+### Reflect, forget, lifecycle, maintenance, traces
 
 ```swift
 _ = try await memory.reflect("patterns in customer complaints this month?", persist: true)
-_ = try await memory.forget("anything about my old job")
+_ = try await memory.forget("anything about my old job")          // purge: false by default
 
-try await memory.lifecycle.expire()
-try await memory.lifecycle.decay()
+_ = try await memory.lifecycle.expire()                            // -> affected count
+_ = try await memory.lifecycle.decay()
+
+_ = try await memory.consolidate(dryRun: true)                     // promote observations into facts
+_ = try await memory.elaborate(sweep: true, dryRun: true)          // infer new relations
+_ = try await memory.fsck()                                        // integrity report
+
+_ = try await memory.inspect(ref: "Person/tobie")                  // entity, attribute, relation, or trace
+_ = try await memory.audit(limit: 100)
 
 _ = try await memory.traces.list(limit: 50)
-_ = try await memory.traces.get("decision_trace:abc123")
+_ = try await memory.traces.get("trace:abc123")
 _ = try await memory.traces.stats()
+```
+
+### Scopes and principals
+
+Governance lives under `scopes` and `principals`.
+
+```swift
+_ = try await memory.scopes.list()
+_ = try await memory.scopes.register(path: "org/anneal", displayName: "Anneal")
+_ = try await memory.scopes.forget(path: "org/anneal")
+try await memory.scopes.delete(path: "org/anneal")
+
+_ = try await memory.principals.list()
+_ = try await memory.principals.get("agent:reader")
+_ = try await memory.principals.effective(principalId: "agent:reader", path: "org/anneal")
+_ = try await memory.principals.grant(principalId: "agent:reader", path: "org/anneal", verbs: ["read"])
+_ = try await memory.principals.revoke(principalId: "agent:reader", path: "org/anneal", verbs: ["read"])
+```
+
+### Health
+
+```swift
+_ = try await memory.health()
 ```
 
 ### Errors
 
-All failures throw `SpectronError`, a single struct carrying `status`, `title`, `detail`, `typeURI`, `instance`, `extensions`, and `retryAfter`. The `kind` field maps the HTTP status to one of `.base`, `.auth`, `.scope`, `.notFound`, `.validation`, `.rateLimit`, or `.server`.
+All failures throw `SpectronError`, a single struct carrying `status`, `title`, `detail`, and `retryAfter` (plus `typeURI`, `instance`, and `extensions` for forward compatibility). The end-user API returns errors as `{ "message": "..." }`, which is surfaced as `title`. The `kind` field maps the HTTP status to one of `.base`, `.auth`, `.scope`, `.notFound`, `.validation`, `.rateLimit`, or `.server`.
 
 ```swift
 do {
-    _ = try await memory.knowledge.get("doc:missing")
+    _ = try await memory.documents.get("doc:missing")
 } catch let error as SpectronError where error.isNotFound {
-    print(error.status, error.detail ?? "")
+    print(error.status, error.title)
 } catch let error as SpectronError where error.isRateLimit {
     print("retry after", error.retryAfter ?? 0, "seconds")
 }
@@ -736,12 +765,7 @@ do {
 
 `GET` requests retry on connection errors and 5xx responses with backoff 250ms, 500ms, 1s (up to `maxRetries`, default 3). Writes are never retried. Default request timeout is 30 seconds, overridable on the `Spectron` initialiser.
 
-Scope is a `[String: String]` dictionary on the API surface. The transport serialises it to the wire format `[{"key": "...", "value": "..."}]` and back. If you need the raw conversion:
-
-```swift
-let wire = Scope.serialise(["org": "anneal"])
-let back = Scope.deserialise(wire)
-```
+Scope is a list of path strings (`["org/anneal", "org/anneal/team-eng"]`) on requests that accept it, and is returned the same way on sessions and scope nodes.
 
 ### Custom transport for testing
 

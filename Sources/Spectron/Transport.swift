@@ -235,6 +235,13 @@ public actor SpectronTransport {
         return try encoder.encode(value)
     }
 
+    /// Encodes any `Encodable` value into a `JSONValue` so it can be embedded
+    /// in a manually-assembled request payload.
+    public func jsonValue<T: Encodable>(_ value: T) throws -> JSONValue {
+        let data = try encode(value)
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
     public func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         let decoder = JSONDecoder()
         do {
