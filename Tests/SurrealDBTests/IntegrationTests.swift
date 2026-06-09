@@ -151,7 +151,7 @@ private func assertAllOK(_ rows: [RPCQueryResult]) {
 func integration_wsAuthQueryCrud() async throws {
     guard IntegrationEnv.enabled else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
+    let client = try SurrealClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
@@ -180,7 +180,7 @@ func integration_wsAuthQueryCrud() async throws {
 func integration_httpParity() async throws {
     guard IntegrationEnv.enabled else { return }
 
-    let client = try SurrealHTTPClient(endpoint: httpEndpoint())
+    let client = try SurrealClient(endpoint: httpEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
@@ -195,7 +195,7 @@ func integration_httpParity() async throws {
 func integration_wsFullCRUDQueries() async throws {
     guard IntegrationEnv.enabled else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
+    let client = try SurrealClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
@@ -241,7 +241,7 @@ func integration_wsFullCRUDQueries() async throws {
 func integration_wsFunctionAndGeoQueries() async throws {
     guard IntegrationEnv.enabled else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
+    let client = try SurrealClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 
@@ -266,7 +266,7 @@ func integration_wsFunctionAndGeoQueries() async throws {
 func integration_wsLiveQueries() async throws {
     guard IntegrationEnv.enabled else { return }
 
-    let client = try SurrealWebSocketClient(endpoint: wsEndpoint())
+    let client = try SurrealClient(endpoint: wsEndpoint())
     try await client.connect()
     defer { Task { await client.close() } }
 

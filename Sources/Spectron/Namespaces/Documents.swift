@@ -20,7 +20,8 @@ public struct DocumentsNamespace: Sendable {
     public func upload(
         file: SpectronFile,
         title: String? = nil,
-        source: String? = nil
+        source: String? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> UploadResponse {
         let (data, filename, mime) = try file.read()
         let metadata = UploadMetadata(title: title, source: source, mimeType: mime)
@@ -28,7 +29,13 @@ public struct DocumentsNamespace: Sendable {
         try appendMetadata(metadata, to: &form)
         form.appendFile("file", filename: filename, mimeType: mime, data: data)
         let body = form.finalize()
-        let (respData, _) = try await transport.uploadMultipart(base, method: "POST", body: body, contentType: form.contentType)
+        let (respData, _) = try await transport.uploadMultipart(
+            base,
+            method: "POST",
+            body: body,
+            contentType: form.contentType,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(UploadResponse.self, from: respData)
     }
 
@@ -37,7 +44,8 @@ public struct DocumentsNamespace: Sendable {
         documentId: String,
         file: SpectronFile,
         title: String? = nil,
-        source: String? = nil
+        source: String? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> UploadResponse {
         let (data, filename, mime) = try file.read()
         let metadata = UploadMetadata(title: title, source: source, mimeType: mime)
@@ -46,7 +54,13 @@ public struct DocumentsNamespace: Sendable {
         form.appendFile("file", filename: filename, mimeType: mime, data: data)
         let body = form.finalize()
         let path = "\(base)/\(SpectronTransport.quotePath(documentId))"
-        let (respData, _) = try await transport.uploadMultipart(path, method: "PUT", body: body, contentType: form.contentType)
+        let (respData, _) = try await transport.uploadMultipart(
+            path,
+            method: "PUT",
+            body: body,
+            contentType: form.contentType,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(UploadResponse.self, from: respData)
     }
 
@@ -60,26 +74,34 @@ public struct DocumentsNamespace: Sendable {
 
     // MARK: - Read
 
-    public func get(_ documentId: String) async throws -> Document {
-        try await transport.get("\(base)/\(SpectronTransport.quotePath(documentId))", as: Document.self)
+    public func get(_ documentId: String, onBehalfOf: String? = nil) async throws -> Document {
+        try await transport.get(
+            "\(base)/\(SpectronTransport.quotePath(documentId))",
+            extraHeaders: delegationHeaders(onBehalfOf),
+            as: Document.self
+        )
     }
 
-    public func raw(_ documentId: String) async throws -> Data {
-        try await transport.rawBytes("\(base)/\(SpectronTransport.quotePath(documentId))/raw")
+    public func raw(_ documentId: String, onBehalfOf: String? = nil) async throws -> Data {
+        try await transport.rawBytes(
+            "\(base)/\(SpectronTransport.quotePath(documentId))/raw",
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
     }
 
-    public func chunks(_ documentId: String, page: Int? = nil, pageSize: Int? = nil) async throws -> ChunkPage {
+    public func chunks(_ documentId: String, page: Int? = nil, pageSize: Int? = nil, onBehalfOf: String? = nil) async throws -> ChunkPage {
         let q = QueryItems.from([("page", page), ("page_size", pageSize)])
         return try await transport.get(
             "\(base)/\(SpectronTransport.quotePath(documentId))/chunks",
             query: q,
+            extraHeaders: delegationHeaders(onBehalfOf),
             as: ChunkPage.self
         )
     }
 
-    public func keywordsFor(_ documentId: String) async throws -> [DocumentKeyword] {
+    public func keywordsFor(_ documentId: String, onBehalfOf: String? = nil) async throws -> [DocumentKeyword] {
         let path = "\(base)/\(SpectronTransport.quotePath(documentId))/keywords"
-        let resp = try await transport.get(path, as: DocumentKeywordsResponse.self)
+        let resp = try await transport.get(path, extraHeaders: delegationHeaders(onBehalfOf), as: DocumentKeywordsResponse.self)
         return resp.keywords
     }
 
@@ -87,7 +109,8 @@ public struct DocumentsNamespace: Sendable {
         status: DocumentStatus? = nil,
         mimeType: String? = nil,
         page: Int? = nil,
-        pageSize: Int? = nil
+        pageSize: Int? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> DocumentPage {
         let q = QueryItems.from([
             ("status", status?.rawValue),
@@ -95,11 +118,14 @@ public struct DocumentsNamespace: Sendable {
             ("page", page),
             ("page_size", pageSize)
         ])
-        return try await transport.get(base, query: q, as: DocumentPage.self)
+        return try await transport.get(base, query: q, extraHeaders: delegationHeaders(onBehalfOf), as: DocumentPage.self)
     }
 
-    public func delete(_ documentId: String) async throws {
-        try await transport.delete("\(base)/\(SpectronTransport.quotePath(documentId))")
+    public func delete(_ documentId: String, onBehalfOf: String? = nil) async throws {
+        try await transport.delete(
+            "\(base)/\(SpectronTransport.quotePath(documentId))",
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
     }
 
     // MARK: - Query
@@ -119,7 +145,8 @@ public struct DocumentsNamespace: Sendable {
         useHyde: Bool? = nil,
         useReranker: Bool? = nil,
         filter: QueryFilter? = nil,
-        location: DocGeoFilter? = nil
+        location: DocGeoFilter? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> QueryResponse {
         var payload: [String: JSONValue] = ["query": .string(query)]
         if let mode { payload["mode"] = .string(mode.rawValue) }
@@ -137,13 +164,23 @@ public struct DocumentsNamespace: Sendable {
         if let filter { payload["filter"] = try await transport.jsonValue(filter) }
         if let location { payload["location"] = try await transport.jsonValue(location) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/query", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/query",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(QueryResponse.self, from: respData)
     }
 
-    public func recomputeLinks() async throws -> RecomputeLinksResponse {
+    public func recomputeLinks(onBehalfOf: String? = nil) async throws -> RecomputeLinksResponse {
         let data = try JSONValue.encodeObject([:])
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/recompute-links", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/recompute-links",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(RecomputeLinksResponse.self, from: respData)
     }
 }
@@ -164,7 +201,8 @@ public struct KeywordsNamespace: Sendable {
         minDocumentCount: Int? = nil,
         sort: String? = nil,
         page: Int? = nil,
-        pageSize: Int? = nil
+        pageSize: Int? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> KeywordPage {
         let qi = QueryItems.from([
             ("q", q),
@@ -173,19 +211,28 @@ public struct KeywordsNamespace: Sendable {
             ("page", page),
             ("pageSize", pageSize)
         ])
-        return try await transport.get(base, query: qi, as: KeywordPage.self)
+        return try await transport.get(base, query: qi, extraHeaders: delegationHeaders(onBehalfOf), as: KeywordPage.self)
     }
 
-    public func search(_ query: String, k: Int? = nil, threshold: Double? = nil) async throws -> KeywordSearchResponse {
+    public func search(_ query: String, k: Int? = nil, threshold: Double? = nil, onBehalfOf: String? = nil) async throws -> KeywordSearchResponse {
         var payload: [String: JSONValue] = ["query": .string(query)]
         if let k { payload["k"] = .int(Int64(k)) }
         if let threshold { payload["threshold"] = .double(threshold) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/search", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/search",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(KeywordSearchResponse.self, from: respData)
     }
 
-    public func get(_ normalised: String) async throws -> KeywordDetail {
-        try await transport.get("\(base)/\(SpectronTransport.quotePath(normalised))", as: KeywordDetail.self)
+    public func get(_ normalised: String, onBehalfOf: String? = nil) async throws -> KeywordDetail {
+        try await transport.get(
+            "\(base)/\(SpectronTransport.quotePath(normalised))",
+            extraHeaders: delegationHeaders(onBehalfOf),
+            as: KeywordDetail.self
+        )
     }
 }

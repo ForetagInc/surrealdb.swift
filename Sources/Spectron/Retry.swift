@@ -8,9 +8,12 @@ public enum Retry {
         return Array(backoffSeconds.prefix(capped))
     }
 
-    public static func shouldRetry(method: String, status: Int?, attempt: Int, maxRetries: Int) -> Bool {
+    public static func shouldRetry(method: String, status: Int?, attempt: Int, maxRetries: Int, idempotent: Bool = false) -> Bool {
         if attempt >= maxRetries { return false }
-        if method.uppercased() != "GET" { return false }
+        // GET is always safe to retry. Other verbs are retried only when the
+        // caller marks the request idempotent (for example, a write carrying an
+        // Idempotency-Key that the server deduplicates).
+        if method.uppercased() != "GET" && !idempotent { return false }
         guard let status else { return true }
         return status >= 500
     }

@@ -38,7 +38,8 @@ public struct MemoryNamespace: Sendable {
         atInstant: String? = nil,
         validFrom: String? = nil,
         validUntil: String? = nil,
-        location: GeoFilter? = nil
+        location: GeoFilter? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> MemoryQueryResponse {
         var payload: [String: JSONValue] = ["query": .string(query)]
         if let k { payload["k"] = .int(Int64(k)) }
@@ -55,7 +56,12 @@ public struct MemoryNamespace: Sendable {
         if let validUntil { payload["validUntil"] = .string(validUntil) }
         if let location { payload["location"] = try await transport.jsonValue(location) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/query", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/query",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(MemoryQueryResponse.self, from: respData)
     }
 
@@ -64,7 +70,8 @@ public struct MemoryNamespace: Sendable {
         k: Int? = nil,
         labels: [String]? = nil,
         lens: [String]? = nil,
-        scopeView: String? = nil
+        scopeView: String? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> ContextResult {
         var payload: [String: JSONValue] = ["query": .string(query)]
         if let k { payload["k"] = .int(Int64(k)) }
@@ -72,7 +79,12 @@ public struct MemoryNamespace: Sendable {
         if let lens { payload["lens"] = .array(lens.map { .string($0) }) }
         if let scopeView { payload["scopeView"] = .string(scopeView) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/context", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/context",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(ContextResult.self, from: respData)
     }
 
@@ -82,46 +94,89 @@ public struct MemoryNamespace: Sendable {
         labels: [String]? = nil,
         scope: [String]? = nil,
         model: String? = nil,
-        bypassCache: Bool? = nil
+        bypassCache: Bool? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> ChatReply {
+        let data = try chatPayload(message, sessionId: sessionId, labels: labels, scope: scope, model: model, bypassCache: bypassCache, stream: false)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/chat",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
+        return try await transport.decode(ChatReply.self, from: respData)
+    }
+
+    /// Streams a chat reply as Server-Sent Events.
+    public func chatStream(
+        _ message: String,
+        sessionId: String? = nil,
+        labels: [String]? = nil,
+        scope: [String]? = nil,
+        model: String? = nil,
+        bypassCache: Bool? = nil,
+        onBehalfOf: String? = nil
+    ) async throws -> AsyncThrowingStream<ChatChunk, any Error> {
+        let data = try chatPayload(message, sessionId: sessionId, labels: labels, scope: scope, model: model, bypassCache: bypassCache, stream: true)
+        return try await transport.streamSSE(path: "\(base)/chat", jsonBody: data, extraHeaders: delegationHeaders(onBehalfOf))
+    }
+
+    private func chatPayload(
+        _ message: String,
+        sessionId: String?,
+        labels: [String]?,
+        scope: [String]?,
+        model: String?,
+        bypassCache: Bool?,
+        stream: Bool
+    ) throws -> Data {
         var payload: [String: JSONValue] = ["message": .string(message)]
+        if stream { payload["stream"] = .bool(true) }
         if let sessionId { payload["sessionId"] = .string(sessionId) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
         if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
         if let model { payload["model"] = .string(model) }
         if let bypassCache { payload["bypassCache"] = .bool(bypassCache) }
-        let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/chat", jsonBody: data)
-        return try await transport.decode(ChatReply.self, from: respData)
+        return try JSONValue.encodeObject(payload)
     }
 
     // MARK: - Structured views
 
-    public func state() async throws -> StructuredState {
-        try await transport.get("\(base)/state", as: StructuredState.self)
+    public func state(onBehalfOf: String? = nil) async throws -> StructuredState {
+        try await transport.get("\(base)/state", extraHeaders: delegationHeaders(onBehalfOf), as: StructuredState.self)
     }
 
-    public func profile() async throws -> ProfileResponse {
-        try await transport.get("\(base)/profile", as: ProfileResponse.self)
+    public func profile(onBehalfOf: String? = nil) async throws -> ProfileResponse {
+        try await transport.get("\(base)/profile", extraHeaders: delegationHeaders(onBehalfOf), as: ProfileResponse.self)
     }
 
-    public func reflect(_ query: String, persist: Bool = false) async throws -> ReflectionResult {
+    public func reflect(_ query: String, persist: Bool = false, onBehalfOf: String? = nil) async throws -> ReflectionResult {
         let payload: [String: JSONValue] = [
             "query": .string(query),
             "persist": .bool(persist)
         ]
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/reflect", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/reflect",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(ReflectionResult.self, from: respData)
     }
 
-    public func forget(_ query: String, purge: Bool = false) async throws -> ForgetResult {
+    public func forget(_ query: String, purge: Bool = false, onBehalfOf: String? = nil) async throws -> ForgetResult {
         let payload: [String: JSONValue] = [
             "query": .string(query),
             "purge": .bool(purge)
         ]
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/forget", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/forget",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(ForgetResult.self, from: respData)
     }
 
@@ -130,13 +185,19 @@ public struct MemoryNamespace: Sendable {
     public func consolidate(
         dryRun: Bool = false,
         factLimit: Int? = nil,
-        observationLimit: Int? = nil
+        observationLimit: Int? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> ConsolidateResponse {
         var payload: [String: JSONValue] = ["dryRun": .bool(dryRun)]
         if let factLimit { payload["factLimit"] = .int(Int64(factLimit)) }
         if let observationLimit { payload["observationLimit"] = .int(Int64(observationLimit)) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/consolidate", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/consolidate",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(ConsolidateResponse.self, from: respData)
     }
 
@@ -144,7 +205,8 @@ public struct MemoryNamespace: Sendable {
         entityRef: String? = nil,
         sweep: Bool = false,
         dryRun: Bool = false,
-        budget: Int? = nil
+        budget: Int? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> ElaborateResponse {
         var payload: [String: JSONValue] = [
             "sweep": .bool(sweep),
@@ -153,21 +215,32 @@ public struct MemoryNamespace: Sendable {
         if let entityRef { payload["entityRef"] = .string(entityRef) }
         if let budget { payload["budget"] = .int(Int64(budget)) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/elaborate", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/elaborate",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(ElaborateResponse.self, from: respData)
     }
 
     public func fsck(
         check: String? = nil,
         duplicateThreshold: Double? = nil,
-        maxResults: Int? = nil
+        maxResults: Int? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> FsckReport {
         var payload: [String: JSONValue] = [:]
         if let check { payload["check"] = .string(check) }
         if let duplicateThreshold { payload["duplicateThreshold"] = .double(duplicateThreshold) }
         if let maxResults { payload["maxResults"] = .int(Int64(maxResults)) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/fsck", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/fsck",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(FsckReport.self, from: respData)
     }
 
@@ -178,7 +251,8 @@ public struct MemoryNamespace: Sendable {
         asOf: String? = nil,
         atInstant: String? = nil,
         validFrom: String? = nil,
-        validUntil: String? = nil
+        validUntil: String? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> InspectResponse {
         let q = QueryItems.from([
             ("ref", ref),
@@ -187,7 +261,7 @@ public struct MemoryNamespace: Sendable {
             ("validFrom", validFrom),
             ("validUntil", validUntil)
         ])
-        return try await transport.get("\(base)/inspect", query: q, as: InspectResponse.self)
+        return try await transport.get("\(base)/inspect", query: q, extraHeaders: delegationHeaders(onBehalfOf), as: InspectResponse.self)
     }
 
     public func audit(
@@ -196,7 +270,8 @@ public struct MemoryNamespace: Sendable {
         kind: String? = nil,
         since: String? = nil,
         until: String? = nil,
-        limit: Int? = nil
+        limit: Int? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> [AuditRow] {
         let q = QueryItems.from([
             ("principal", principal),
@@ -206,7 +281,7 @@ public struct MemoryNamespace: Sendable {
             ("until", until),
             ("limit", limit)
         ])
-        let resp = try await transport.get("\(base)/audit", query: q, as: AuditResponse.self)
+        let resp = try await transport.get("\(base)/audit", query: q, extraHeaders: delegationHeaders(onBehalfOf), as: AuditResponse.self)
         return resp.rows
     }
 }
@@ -224,12 +299,17 @@ public struct SessionsNamespace: Sendable {
         self.base = "\(Paths.endUserBase(contextId))/sessions"
     }
 
-    public func create(scope: [String]? = nil, metadata: JSONValue? = nil) async throws -> SpectronSession {
+    public func create(scope: [String]? = nil, metadata: JSONValue? = nil, onBehalfOf: String? = nil) async throws -> SpectronSession {
         var payload: [String: JSONValue] = [:]
         if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
         if let metadata { payload["metadata"] = metadata }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: base, jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: base,
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         let info = try await transport.decode(SessionInfo.self, from: respData)
         return SpectronSession(transport: transport, contextId: contextId, info: info)
     }
@@ -250,19 +330,24 @@ public struct SpectronSession: Sendable {
 
     public var id: String { info.id }
 
-    public func close() async throws {
-        try await transport.delete(base)
+    public func close(onBehalfOf: String? = nil) async throws {
+        try await transport.delete(base, extraHeaders: delegationHeaders(onBehalfOf))
     }
 
-    public func turns() async throws -> [Turn] {
-        let resp = try await transport.get("\(base)/turns", as: TurnListResponse.self)
+    public func turns(onBehalfOf: String? = nil) async throws -> [Turn] {
+        let resp = try await transport.get("\(base)/turns", extraHeaders: delegationHeaders(onBehalfOf), as: TurnListResponse.self)
         return resp.turns
     }
 
-    public func context(_ query: String) async throws -> SessionContextResult {
+    public func context(_ query: String, onBehalfOf: String? = nil) async throws -> SessionContextResult {
         let payload: [String: JSONValue] = ["query": .string(query)]
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/context", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/context",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(SessionContextResult.self, from: respData)
     }
 
@@ -274,7 +359,8 @@ public struct SpectronSession: Sendable {
         role: TurnRole? = nil,
         memoryCategory: MemoryCategory? = nil,
         infer: InferMode? = nil,
-        labels: [String]? = nil
+        labels: [String]? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> FactsResponse {
         try await FactsNamespace(transport: transport, contextId: contextId).create(
             text: text,
@@ -283,13 +369,14 @@ public struct SpectronSession: Sendable {
             memoryCategory: memoryCategory,
             infer: infer,
             labels: labels,
-            sessionId: info.id
+            sessionId: info.id,
+            onBehalfOf: onBehalfOf
         )
     }
 
     /// Run the managed chat loop with replies scoped to this session.
-    public func chat(_ message: String) async throws -> ChatReply {
-        try await MemoryNamespace(transport: transport, contextId: contextId).chat(message, sessionId: info.id)
+    public func chat(_ message: String, onBehalfOf: String? = nil) async throws -> ChatReply {
+        try await MemoryNamespace(transport: transport, contextId: contextId).chat(message, sessionId: info.id, onBehalfOf: onBehalfOf)
     }
 }
 
@@ -313,7 +400,8 @@ public struct FactsNamespace: Sendable {
         infer: InferMode? = nil,
         labels: [String]? = nil,
         scope: [String]? = nil,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> FactsResponse {
         var payload: [String: JSONValue] = [:]
         if let text { payload["text"] = .string(text) }
@@ -325,7 +413,13 @@ public struct FactsNamespace: Sendable {
         if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
         if let sessionId { payload["session_id"] = .string(sessionId) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: base, jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: base,
+            jsonBody: data,
+            extraHeaders: writeHeaders(path: base, body: data, onBehalfOf: onBehalfOf),
+            idempotent: true
+        )
         return try await transport.decode(FactsResponse.self, from: respData)
     }
 
@@ -336,7 +430,8 @@ public struct FactsNamespace: Sendable {
         infer: InferMode? = nil,
         labels: [String]? = nil,
         scope: [String]? = nil,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        onBehalfOf: String? = nil
     ) async throws -> FactsBatchResponse {
         var payload: [String: JSONValue] = [
             "messages": try await transport.jsonValue(messages)
@@ -347,8 +442,23 @@ public struct FactsNamespace: Sendable {
         if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
         if let sessionId { payload["session_id"] = .string(sessionId) }
         let data = try JSONValue.encodeObject(payload)
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/batch", jsonBody: data)
+        let path = "\(base)/batch"
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: path,
+            jsonBody: data,
+            extraHeaders: writeHeaders(path: path, body: data, onBehalfOf: onBehalfOf),
+            idempotent: true
+        )
         return try await transport.decode(FactsBatchResponse.self, from: respData)
+    }
+
+    /// Delegation plus an idempotency token derived from the request, so a
+    /// retried write is deduplicated server-side rather than applied twice.
+    private func writeHeaders(path: String, body: Data, onBehalfOf: String?) -> [String: String] {
+        var headers = delegationHeaders(onBehalfOf) ?? [:]
+        headers[SpectronHeader.idempotencyKey] = Idempotency.key(method: "POST", path: path, body: body)
+        return headers
     }
 }
 
@@ -363,26 +473,26 @@ public struct EntitiesNamespace: Sendable {
         self.base = "\(Paths.endUserBase(contextId))/entities"
     }
 
-    public func list(type: String? = nil) async throws -> [EntityDetail] {
+    public func list(type: String? = nil, onBehalfOf: String? = nil) async throws -> [EntityDetail] {
         let qi = QueryItems.from([("type", type)])
-        let resp = try await transport.get(base, query: qi, as: EntityListResponse.self)
+        let resp = try await transport.get(base, query: qi, extraHeaders: delegationHeaders(onBehalfOf), as: EntityListResponse.self)
         return resp.entities
     }
 
-    public func get(type: String, name: String) async throws -> EntityView {
+    public func get(type: String, name: String, onBehalfOf: String? = nil) async throws -> EntityView {
         let path = "\(base)/\(SpectronTransport.quotePath(type))/\(SpectronTransport.quotePath(name))"
-        return try await transport.get(path, as: EntityView.self)
+        return try await transport.get(path, extraHeaders: delegationHeaders(onBehalfOf), as: EntityView.self)
     }
 
-    public func history(type: String, name: String, key: String) async throws -> [AttributeDetail] {
+    public func history(type: String, name: String, key: String, onBehalfOf: String? = nil) async throws -> [AttributeDetail] {
         let path = "\(base)/\(SpectronTransport.quotePath(type))/\(SpectronTransport.quotePath(name))/history/\(SpectronTransport.quotePath(key))"
-        let resp = try await transport.get(path, as: EntityHistoryResponse.self)
+        let resp = try await transport.get(path, extraHeaders: delegationHeaders(onBehalfOf), as: EntityHistoryResponse.self)
         return resp.history
     }
 
-    public func delete(type: String, name: String) async throws {
+    public func delete(type: String, name: String, onBehalfOf: String? = nil) async throws {
         let path = "\(base)/\(SpectronTransport.quotePath(type))/\(SpectronTransport.quotePath(name))"
-        try await transport.delete(path)
+        try await transport.delete(path, extraHeaders: delegationHeaders(onBehalfOf))
     }
 }
 
@@ -398,16 +508,26 @@ public struct LifecycleNamespace: Sendable {
     }
 
     @discardableResult
-    public func expire() async throws -> LifecycleResult {
+    public func expire(onBehalfOf: String? = nil) async throws -> LifecycleResult {
         let data = try JSONValue.encodeObject([:])
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/expire", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/expire",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(LifecycleResult.self, from: respData)
     }
 
     @discardableResult
-    public func decay() async throws -> LifecycleResult {
+    public func decay(onBehalfOf: String? = nil) async throws -> LifecycleResult {
         let data = try JSONValue.encodeObject([:])
-        let (respData, _) = try await transport.request(method: "POST", path: "\(base)/decay", jsonBody: data)
+        let (respData, _) = try await transport.request(
+            method: "POST",
+            path: "\(base)/decay",
+            jsonBody: data,
+            extraHeaders: delegationHeaders(onBehalfOf)
+        )
         return try await transport.decode(LifecycleResult.self, from: respData)
     }
 }
@@ -423,17 +543,17 @@ public struct TracesNamespace: Sendable {
         self.base = "\(Paths.endUserBase(contextId))/traces"
     }
 
-    public func list(limit: Int? = nil) async throws -> [TraceRecord] {
+    public func list(limit: Int? = nil, onBehalfOf: String? = nil) async throws -> [TraceRecord] {
         let qi = QueryItems.from([("limit", limit)])
-        let resp = try await transport.get(base, query: qi, as: TraceListResponse.self)
+        let resp = try await transport.get(base, query: qi, extraHeaders: delegationHeaders(onBehalfOf), as: TraceListResponse.self)
         return resp.traces
     }
 
-    public func get(_ traceId: String) async throws -> TraceRecord {
-        try await transport.get("\(base)/\(SpectronTransport.quotePath(traceId))", as: TraceRecord.self)
+    public func get(_ traceId: String, onBehalfOf: String? = nil) async throws -> TraceRecord {
+        try await transport.get("\(base)/\(SpectronTransport.quotePath(traceId))", extraHeaders: delegationHeaders(onBehalfOf), as: TraceRecord.self)
     }
 
-    public func stats() async throws -> TraceStats {
-        try await transport.get("\(base)/stats", as: TraceStats.self)
+    public func stats(onBehalfOf: String? = nil) async throws -> TraceStats {
+        try await transport.get("\(base)/stats", extraHeaders: delegationHeaders(onBehalfOf), as: TraceStats.self)
     }
 }

@@ -5,9 +5,51 @@ import FoundationNetworking
 
 public protocol HTTPClient: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
+
+    /// Streams the response body as a sequence of lines. Used for Server-Sent
+    /// Events (streamed chat). The default implementation buffers the full body
+    /// and splits it, which is sufficient for non-streaming clients and tests;
+    /// `URLSession` overrides it with true incremental streaming.
+    func lines(for request: URLRequest) async throws -> (AsyncThrowingStream<String, any Error>, URLResponse)
 }
 
+public extension HTTPClient {
+    func lines(for request: URLRequest) async throws -> (AsyncThrowingStream<String, any Error>, URLResponse) {
+        let (data, response) = try await data(for: request)
+        let pieces = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+        let stream = AsyncThrowingStream<String, any Error> { continuation in
+            for piece in pieces { continuation.yield(piece) }
+            continuation.finish()
+        }
+        return (stream, response)
+    }
+}
+
+#if canImport(FoundationNetworking)
+// FoundationNetworking's URLSession may not expose `bytes(for:)`; rely on the
+// buffering default from the protocol extension.
 extension URLSession: HTTPClient {}
+#else
+extension URLSession: HTTPClient {
+    public func lines(for request: URLRequest) async throws -> (AsyncThrowingStream<String, any Error>, URLResponse) {
+        let (bytes, response) = try await self.bytes(for: request)
+        let stream = AsyncThrowingStream<String, any Error> { continuation in
+            let task = Task {
+                do {
+                    for try await line in bytes.lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return (stream, response)
+    }
+}
+#endif
 
 public actor SpectronTransport {
     public static let defaultTimeout: TimeInterval = 30
@@ -110,7 +152,8 @@ public actor SpectronTransport {
         rawBody: Data? = nil,
         contentType: String? = nil,
         extraHeaders: [String: String]? = nil,
-        timeoutOverride: TimeInterval? = nil
+        timeoutOverride: TimeInterval? = nil,
+        idempotent: Bool = false
     ) async throws -> (Data, JSONValue?) {
         let url = try buildURL(path: path, query: query)
         let methodUpper = method.uppercased()
@@ -143,7 +186,7 @@ public actor SpectronTransport {
             do {
                 (data, response) = try await client.data(for: req)
             } catch {
-                if Retry.shouldRetry(method: methodUpper, status: nil, attempt: attempt, maxRetries: maxRetries) {
+                if Retry.shouldRetry(method: methodUpper, status: nil, attempt: attempt, maxRetries: maxRetries, idempotent: idempotent) {
                     await sleeper(schedule[attempt])
                     attempt += 1
                     continue
@@ -156,7 +199,7 @@ public actor SpectronTransport {
             }
             let status = http.statusCode
 
-            if status >= 400 && Retry.shouldRetry(method: methodUpper, status: status, attempt: attempt, maxRetries: maxRetries) {
+            if status >= 400 && Retry.shouldRetry(method: methodUpper, status: status, attempt: attempt, maxRetries: maxRetries, idempotent: idempotent) {
                 await sleeper(schedule[attempt])
                 attempt += 1
                 continue
@@ -182,13 +225,13 @@ public actor SpectronTransport {
 
     // MARK: - Convenience verbs (decoded)
 
-    public func get<T: Decodable>(_ path: String, query: [URLQueryItem]? = nil, as: T.Type) async throws -> T {
-        let (data, _) = try await request(method: "GET", path: path, query: query)
+    public func get<T: Decodable>(_ path: String, query: [URLQueryItem]? = nil, extraHeaders: [String: String]? = nil, as: T.Type) async throws -> T {
+        let (data, _) = try await request(method: "GET", path: path, query: query, extraHeaders: extraHeaders)
         return try decode(T.self, from: data)
     }
 
-    public func getOptional<T: Decodable>(_ path: String, query: [URLQueryItem]? = nil, as: T.Type) async throws -> T? {
-        let (data, _) = try await request(method: "GET", path: path, query: query)
+    public func getOptional<T: Decodable>(_ path: String, query: [URLQueryItem]? = nil, extraHeaders: [String: String]? = nil, as: T.Type) async throws -> T? {
+        let (data, _) = try await request(method: "GET", path: path, query: query, extraHeaders: extraHeaders)
         if data.isEmpty { return nil }
         return try decode(T.self, from: data)
     }
@@ -214,17 +257,78 @@ public actor SpectronTransport {
         return json
     }
 
-    public func delete(_ path: String) async throws {
-        _ = try await request(method: "DELETE", path: path)
+    public func delete(_ path: String, extraHeaders: [String: String]? = nil) async throws {
+        _ = try await request(method: "DELETE", path: path, extraHeaders: extraHeaders)
     }
 
-    public func uploadMultipart(_ path: String, method: String = "POST", body: Data, contentType: String) async throws -> (Data, JSONValue?) {
-        try await request(method: method, path: path, rawBody: body, contentType: contentType)
+    public func uploadMultipart(_ path: String, method: String = "POST", body: Data, contentType: String, extraHeaders: [String: String]? = nil) async throws -> (Data, JSONValue?) {
+        try await request(method: method, path: path, rawBody: body, contentType: contentType, extraHeaders: extraHeaders)
     }
 
-    public func rawBytes(_ path: String) async throws -> Data {
-        let (data, _) = try await request(method: "GET", path: path)
+    public func rawBytes(_ path: String, extraHeaders: [String: String]? = nil) async throws -> Data {
+        let (data, _) = try await request(method: "GET", path: path, extraHeaders: extraHeaders)
         return data
+    }
+
+    // MARK: - Server-Sent Events (streamed chat)
+
+    /// POSTs a JSON body and parses the `text/event-stream` response into a
+    /// stream of `ChatChunk` frames. Streamed responses are not retried.
+    public func streamSSE(
+        path: String,
+        jsonBody: Data,
+        extraHeaders: [String: String]? = nil
+    ) async throws -> AsyncThrowingStream<ChatChunk, any Error> {
+        let url = try buildURL(path: path, query: nil)
+        var allHeaders = headers(contentType: "application/json", extra: extraHeaders)
+        allHeaders["Accept"] = "text/event-stream"
+
+        var req = URLRequest(url: url, timeoutInterval: timeout)
+        req.httpMethod = "POST"
+        for (k, v) in allHeaders { req.setValue(v, forHTTPHeaderField: k) }
+        req.httpBody = jsonBody
+
+        let (lineStream, response): (AsyncThrowingStream<String, any Error>, URLResponse)
+        do {
+            (lineStream, response) = try await client.lines(for: req)
+        } catch {
+            throw SpectronErrorFactory.connectionFailed(error)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw SpectronError(kind: .base, status: 0, title: "Invalid response", detail: "Expected HTTPURLResponse")
+        }
+
+        if http.statusCode >= 400 {
+            var collected = ""
+            for try await line in lineStream { collected += line + "\n" }
+            var headerDict: [String: String] = [:]
+            for (k, v) in http.allHeaderFields {
+                if let ks = k as? String, let vs = v as? String { headerDict[ks] = vs }
+            }
+            let body = decodeJSON(Data(collected.utf8))
+            throw SpectronErrorFactory.fromResponse(status: http.statusCode, body: body, headers: headerDict)
+        }
+
+        return AsyncThrowingStream<ChatChunk, any Error> { continuation in
+            let task = Task {
+                var parser = SSEParser()
+                do {
+                    for try await line in lineStream {
+                        if let chunk = parser.consume(line) {
+                            continuation.yield(chunk)
+                        }
+                    }
+                    if let chunk = parser.flush() {
+                        continuation.yield(chunk)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     // MARK: - Codec helpers
