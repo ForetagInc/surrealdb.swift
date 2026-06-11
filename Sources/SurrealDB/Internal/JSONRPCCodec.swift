@@ -25,7 +25,7 @@ enum JSONRPCCodec {
             wire = try JSONDecoder.surrealDefault.decode(WireResponse.self, from: data)
         } catch {
             throw SurrealError.invalidResponse(
-                "Failed to decode JSON-RPC envelope: \(error.localizedDescription)"
+                "Failed to decode RPC envelope from JSON: \(error.localizedDescription)"
             )
         }
         return RPCResponseEnvelope(

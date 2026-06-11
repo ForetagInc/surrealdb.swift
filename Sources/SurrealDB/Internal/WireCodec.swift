@@ -6,7 +6,7 @@ public enum SurrealWireProtocol: Sendable, Hashable {
     /// (UUID, datetime, record IDs, geometries, ranges, etc.) without lossy
     /// coercion. Default.
     case cbor
-    /// JSON-RPC encoding. Compatible with any HTTP front-end; lossy for
+    /// JSON encoding. Compatible with any HTTP front-end; lossy for
     /// SurrealDB-specific types that don't have a JSON primitive (UUID,
     /// datetime, decimal, duration, record IDs, geometries are sent as
     /// strings/objects).

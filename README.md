@@ -16,10 +16,10 @@ iOS 17+ · macOS 14+ · tvOS 17+ · watchOS 10+ · visionOS 1+
 ## Features
 
 - Pluggable transport engines (HTTP, WebSocket) with room for additional engines (e.g. embedded) down the line
-- Pluggable wire protocols (CBOR, JSON-RPC) — opt into either per-client
+- Pluggable wire protocols (CBOR, JSON) — opt into either per-client
 - Type-safe CRUD via `@SurrealModel` macro and query DSL
 - Live queries over WebSocket via `AsyncStream`
-- Client-side transactions (`BEGIN; … COMMIT;`) with automatic binding-collision rewriting
+- Client-side transactions with automatic binding-collision rewriting
 - Raw SQL queries with bound parameters
 - Root, namespace, database, and record-access authentication
 - Automatic WebSocket reconnection
@@ -148,13 +148,13 @@ let client = try SurrealClient(
 
 ### Wire Protocol
 
-The client defaults to SurrealDB's tagged CBOR encoding, which preserves all `SurrealValue` types (UUID, datetime, decimal, duration, record IDs, geometries, ranges, and so on) losslessly. JSON-RPC is also supported and may be preferable for environments where CBOR is harder to inspect.
+The client defaults to SurrealDB's tagged CBOR encoding, which preserves all `SurrealValue` types (UUID, datetime, decimal, duration, record IDs, geometries, ranges, and so on) losslessly. JSON is also supported and may be preferable for environments where CBOR is harder to inspect.
 
 ```swift
 // CBOR (default), full fidelity
 let cbor = try SurrealClient(endpoint: "ws://localhost:8000")
 
-// JSON-RPC, primitives only; SurrealDB-specific types are coerced to strings
+// JSON, primitives only; SurrealDB-specific types are coerced to strings
 let json = try SurrealClient(
     endpoint: "http://localhost:8000",
     wireProtocol: .json
