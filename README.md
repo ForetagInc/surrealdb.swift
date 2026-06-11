@@ -811,7 +811,16 @@ do {
 
 `GET` requests retry on connection errors and 5xx responses with backoff 250ms, 500ms, 1s (up to `maxRetries`, default 3). Writes are not retried, except `remember` / `rememberMany`, which carry an `Idempotency-Key` and so are retried safely. Default request timeout is 30 seconds, overridable on the `Spectron` initialiser.
 
-Scope is a list of path strings (`["org/anneal", "org/anneal/team-eng"]`) on requests that accept it, and is returned the same way on sessions and scope nodes.
+Scope identifies the memory region a write targets. On requests that accept it (`remember`, `rememberMany`, `chat`, `sessions.create`), the `scope:` argument is a `Scope` value built from a single slash path, a list of paths, or key/value pairs. All forms normalise to an ordered, de-duplicated list of slash-path strings with empties dropped; omitting it uses the key's default write region.
+
+```swift
+_ = try await memory.remember("...", scope: "team/eng")
+_ = try await memory.remember("...", scope: ["team/eng", "org/acme"])
+_ = try await memory.remember("...", scope: ["org": "acme"])      // -> ["org/acme"]
+_ = try await memory.remember("...", scope: Scope(runtimePaths))  // from a [String] value
+```
+
+Sessions and scope nodes return scope the same way, as a list of slash-path strings.
 
 ### Custom transport for testing
 

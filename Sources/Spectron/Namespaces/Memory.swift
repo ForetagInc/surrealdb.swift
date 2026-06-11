@@ -92,7 +92,7 @@ public struct MemoryNamespace: Sendable {
         _ message: String,
         sessionId: String? = nil,
         labels: [String]? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         model: String? = nil,
         bypassCache: Bool? = nil,
         onBehalfOf: String? = nil
@@ -112,7 +112,7 @@ public struct MemoryNamespace: Sendable {
         _ message: String,
         sessionId: String? = nil,
         labels: [String]? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         model: String? = nil,
         bypassCache: Bool? = nil,
         onBehalfOf: String? = nil
@@ -125,7 +125,7 @@ public struct MemoryNamespace: Sendable {
         _ message: String,
         sessionId: String?,
         labels: [String]?,
-        scope: [String]?,
+        scope: Scope?,
         model: String?,
         bypassCache: Bool?,
         stream: Bool
@@ -134,7 +134,9 @@ public struct MemoryNamespace: Sendable {
         if stream { payload["stream"] = .bool(true) }
         if let sessionId { payload["sessionId"] = .string(sessionId) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
+        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
+            payload["scope"] = .array(scopePaths.map { .string($0) })
+        }
         if let model { payload["model"] = .string(model) }
         if let bypassCache { payload["bypassCache"] = .bool(bypassCache) }
         return try JSONValue.encodeObject(payload)
@@ -299,9 +301,11 @@ public struct SessionsNamespace: Sendable {
         self.base = "\(Paths.endUserBase(contextId))/sessions"
     }
 
-    public func create(scope: [String]? = nil, metadata: JSONValue? = nil, onBehalfOf: String? = nil) async throws -> SpectronSession {
+    public func create(scope: Scope? = nil, metadata: JSONValue? = nil, onBehalfOf: String? = nil) async throws -> SpectronSession {
         var payload: [String: JSONValue] = [:]
-        if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
+        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
+            payload["scope"] = .array(scopePaths.map { .string($0) })
+        }
         if let metadata { payload["metadata"] = metadata }
         let data = try JSONValue.encodeObject(payload)
         let (respData, _) = try await transport.request(
@@ -399,7 +403,7 @@ public struct FactsNamespace: Sendable {
         memoryCategory: MemoryCategory? = nil,
         infer: InferMode? = nil,
         labels: [String]? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         sessionId: String? = nil,
         onBehalfOf: String? = nil
     ) async throws -> FactsResponse {
@@ -410,7 +414,9 @@ public struct FactsNamespace: Sendable {
         if let memoryCategory { payload["memory_category"] = .string(memoryCategory.rawValue) }
         if let infer { payload["infer"] = .string(infer.rawValue) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
+        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
+            payload["scope"] = .array(scopePaths.map { .string($0) })
+        }
         if let sessionId { payload["session_id"] = .string(sessionId) }
         let data = try JSONValue.encodeObject(payload)
         let (respData, _) = try await transport.request(
@@ -429,7 +435,7 @@ public struct FactsNamespace: Sendable {
         extract: BatchExtractionMode? = nil,
         infer: InferMode? = nil,
         labels: [String]? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         sessionId: String? = nil,
         onBehalfOf: String? = nil
     ) async throws -> FactsBatchResponse {
@@ -439,7 +445,9 @@ public struct FactsNamespace: Sendable {
         if let extract { payload["extract"] = .string(extract.rawValue) }
         if let infer { payload["infer"] = .string(infer.rawValue) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let scope { payload["scope"] = .array(scope.map { .string($0) }) }
+        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
+            payload["scope"] = .array(scopePaths.map { .string($0) })
+        }
         if let sessionId { payload["session_id"] = .string(sessionId) }
         let data = try JSONValue.encodeObject(payload)
         let path = "\(base)/batch"

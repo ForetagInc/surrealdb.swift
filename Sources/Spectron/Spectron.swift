@@ -74,7 +74,7 @@ public struct Spectron: Sendable {
         triples: [Triple]? = nil,
         infer: InferMode? = nil,
         sessionId: String? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         role: TurnRole? = nil,
         memoryCategory: MemoryCategory? = nil,
         labels: [String]? = nil,
@@ -98,7 +98,7 @@ public struct Spectron: Sendable {
     public func rememberMany(
         _ messages: [BatchMessage],
         sessionId: String? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         extract: BatchExtractionMode? = nil,
         infer: InferMode? = nil,
         labels: [String]? = nil,
@@ -167,7 +167,7 @@ public struct Spectron: Sendable {
     public func chat(
         _ message: String,
         sessionId: String? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         model: String? = nil,
         bypassCache: Bool? = nil,
         labels: [String]? = nil,
@@ -187,7 +187,7 @@ public struct Spectron: Sendable {
     public func chatStream(
         _ message: String,
         sessionId: String? = nil,
-        scope: [String]? = nil,
+        scope: Scope? = nil,
         model: String? = nil,
         bypassCache: Bool? = nil,
         labels: [String]? = nil,
