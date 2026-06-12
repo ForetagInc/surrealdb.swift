@@ -1,10 +1,10 @@
 import Foundation
 
-actor SurrealClientCore<Engine: RPCEngine> {
-    private let engine: Engine
+actor SurrealClientCore {
+    private let engine: any RPCEngine
     private var sessionContext: SessionContext
 
-    init(engine: Engine, sessionContext: SessionContext = .init()) {
+    init(engine: any RPCEngine, sessionContext: SessionContext = .init()) {
         self.engine = engine
         self.sessionContext = sessionContext
     }
@@ -76,7 +76,14 @@ actor SurrealClientCore<Engine: RPCEngine> {
             ]
         )
 
-        return try CBORSurrealCodec.decodeQueryResults(from: response)
+        return try RPCWire.decodeQueryResults(from: response)
+    }
+
+    func transaction(_ build: (SurrealTransaction) throws -> Void) async throws -> [RPCQueryResult] {
+        let tx = SurrealTransaction()
+        try build(tx)
+        let (sql, bindings) = tx.build()
+        return try await queryRaw(sql, bindings: bindings)
     }
 
     func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>) async throws -> [T] {
@@ -266,10 +273,16 @@ actor SurrealClientCore<Engine: RPCEngine> {
     }
 }
 
-extension SurrealClientCore where Engine: LiveRPCEngine {
+extension SurrealClientCore {
     func live<T: Decodable & Sendable>(_ query: LiveQuery<T>) async throws -> AsyncStream<LiveEvent<T>> {
+        guard let liveEngine = engine as? any LiveRPCEngine else {
+            throw SurrealError.unsupportedFeature(
+                "Live queries require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+            )
+        }
+
         let queryID = try await registerLiveQuery(query)
-        let wireStream = await engine.openLiveStream(for: queryID)
+        let wireStream = await liveEngine.openLiveStream(for: queryID)
 
         return AsyncStream { continuation in
             let forwardTask = Task {
@@ -292,7 +305,7 @@ extension SurrealClientCore where Engine: LiveRPCEngine {
                 forwardTask.cancel()
                 Task {
                     try? await self.kill(liveQueryID: queryID)
-                    await self.engine.closeLiveStream(for: queryID)
+                    await liveEngine.closeLiveStream(for: queryID)
                 }
             }
         }

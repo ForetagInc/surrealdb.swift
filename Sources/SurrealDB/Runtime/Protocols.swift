@@ -14,6 +14,10 @@ public protocol SurrealQueryable: Sendable {
     func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>) async throws -> [T]
     func queryRaw(_ sql: String, bindings: [String: SurrealValue]) async throws -> [RPCQueryResult]
 
+    func transaction(
+        _ build: @Sendable (SurrealTransaction) throws -> Void
+    ) async throws -> [RPCQueryResult]
+
     func select<Model: SurrealModel & Decodable & Sendable>(
         _ model: Model.Type,
         where predicate: SurrealPredicate?,

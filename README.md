@@ -15,9 +15,11 @@ iOS 17+ · macOS 14+ · tvOS 17+ · watchOS 10+ · visionOS 1+
 
 ## Features
 
-- HTTP and WebSocket transports
+- Pluggable transport engines (HTTP, WebSocket) with room for additional engines (e.g. embedded) down the line
+- Pluggable wire protocols (CBOR, JSON) — opt into either per-client
 - Type-safe CRUD via `@SurrealModel` macro and query DSL
 - Live queries over WebSocket via `AsyncStream`
+- Client-side transactions with automatic binding-collision rewriting
 - Raw SQL queries with bound parameters
 - Root, namespace, database, and record-access authentication
 - Automatic WebSocket reconnection
@@ -57,8 +59,8 @@ struct Person: Codable, Sendable {
     let age: Int
 }
 
-// 2. Create a client and connect
-let client = try SurrealWebSocketClient(endpoint: "ws://localhost:8000")
+// 2. Create a client and connect (the engine is chosen from the URL scheme)
+let client = try SurrealClient(endpoint: "ws://localhost:8000")
 try await client.connect()
 
 // 3. Authenticate and select a namespace/database
@@ -108,22 +110,33 @@ struct Article: SurrealModel, Codable, Sendable {
 
 ## Connecting
 
-### HTTP Client
-
-Suitable for request/response workloads. Does not support live queries.
+A single `SurrealClient` serves both transports. The engine is selected from the endpoint scheme: `ws://` and `wss://` use the WebSocket engine (live queries, automatic reconnection), while `http://` and `https://` use the request/response HTTP engine.
 
 ```swift
-let client = try SurrealHTTPClient(endpoint: "http://localhost:8000")
-try await client.connect()
-defer { Task { await client.close() } }
+// WebSocket engine, inferred from the scheme
+let ws = try SurrealClient(endpoint: "ws://localhost:8000")
+try await ws.connect()
+defer { Task { await ws.close() } }
+
+// HTTP engine, inferred from the scheme
+let http = try SurrealClient(endpoint: "http://localhost:8000")
+try await http.connect()
+defer { Task { await http.close() } }
 ```
 
-### WebSocket Client
-
-Required for live queries. Reconnects automatically by default.
+The selected engine is exposed on the client:
 
 ```swift
-let client = try SurrealWebSocketClient(
+let client = try SurrealClient(endpoint: "wss://example.com")
+client.engine  // .webSocket
+```
+
+Live queries are only available over WebSocket. Calling `live(_:)` on a client created with an HTTP endpoint throws `SurrealError.unsupportedFeature`.
+
+WebSocket reconnection is configurable via `websocketOptions`, which is ignored for HTTP endpoints:
+
+```swift
+let client = try SurrealClient(
     endpoint: "ws://localhost:8000",
     websocketOptions: SurrealWebSocketOptions(
         reconnectEnabled: true,
@@ -131,9 +144,24 @@ let client = try SurrealWebSocketClient(
         reconnectBaseDelay: 0.5
     )
 )
-try await client.connect()
-defer { Task { await client.close() } }
 ```
+
+### Wire Protocol
+
+The client defaults to SurrealDB's tagged CBOR encoding, which preserves all `SurrealValue` types (UUID, datetime, decimal, duration, record IDs, geometries, ranges, and so on) losslessly. JSON is also supported and may be preferable for environments where CBOR is harder to inspect.
+
+```swift
+// CBOR (default), full fidelity
+let cbor = try SurrealClient(endpoint: "ws://localhost:8000")
+
+// JSON, primitives only; SurrealDB-specific types are coerced to strings
+let json = try SurrealClient(
+    endpoint: "http://localhost:8000",
+    wireProtocol: .json
+)
+```
+
+The wire protocol controls both the HTTP `Content-Type` and the WebSocket sub-protocol negotiated during the handshake.
 
 ### Selecting a Namespace and Database
 
@@ -211,7 +239,7 @@ let tokens = try await client.signup(.accessRecord(
 try await client.authenticate(tokens.access)
 
 // Or start with a pre-existing token
-let client = try SurrealHTTPClient(
+let client = try SurrealClient(
     endpoint: "http://localhost:8000",
     session: SessionContext(
         namespace: "myapp",
@@ -378,10 +406,10 @@ let created = try await client.query(createQuery)
 
 ## Live Queries
 
-Live queries require `SurrealWebSocketClient` and return an `AsyncStream<LiveEvent<T>>`.
+Live queries require a WebSocket endpoint (`ws://` or `wss://`) and return an `AsyncStream<LiveEvent<T>>`. On an HTTP endpoint, `live(_:)` throws `SurrealError.unsupportedFeature`.
 
 ```swift
-let client = try SurrealWebSocketClient(endpoint: "ws://localhost:8000")
+let client = try SurrealClient(endpoint: "ws://localhost:8000")
 try await client.connect()
 _ = try await client.signin(.root(username: "root", password: "root"))
 try await client.use(namespace: "myapp", database: "mydb")
@@ -428,6 +456,46 @@ for row in results {
     if row.status == .ok {
         print(row.result) // SurrealValue
     }
+}
+```
+
+---
+
+## Transactions
+
+`transaction { tx in … }` bundles multiple statements into a single `BEGIN; … COMMIT;` query call. SurrealDB cancels the transaction server-side if any statement fails.
+
+```swift
+let results = try await client.transaction { tx in
+    tx.append(
+        "CREATE person CONTENT $content",
+        bindings: ["content": try .fromEncodable(Person(id: nil, name: "Ada", age: 30))]
+    )
+    tx.append(
+        "UPDATE person SET age = 31 WHERE name = $name",
+        bindings: ["name": .string("Ada")]
+    )
+}
+```
+
+Typed `SurrealQuery<T>` values (including those produced by the macros and DSL) can be appended directly:
+
+```swift
+try await client.transaction { tx in
+    tx.append(#create(Person.self))
+    tx.append(#update(Person.self, where: Person.Fields.name == "Ada"))
+}
+```
+
+If two statements share a binding name with different values, the second one is automatically renamed (`$content` → `$content_tx1`) and its SQL is rewritten to match — so you can freely combine independently built queries.
+
+To abort before flushing, simply throw from the closure; no `BEGIN` is sent.
+
+```swift
+try await client.transaction { tx in
+    tx.append(#create(Person.self))
+    if shouldAbort { throw MyError.cancelled } // nothing is sent to the server
+    tx.append(#update(Person.self))
 }
 ```
 
@@ -497,6 +565,276 @@ SessionContext(
 
 ---
 
+## Spectron
+
+The package also ships a `Spectron` library product, a client for [Spectron](https://surrealdb.com/platform/spectron), SurrealDB's memory and knowledge API. Add it to your target alongside `SurrealDB` (or on its own):
+
+```swift
+.product(name: "Spectron", package: "surrealdb.swift")
+```
+
+```swift
+import Spectron
+
+let memory = try Spectron(
+    context: "acme-prod",
+    endpoint: "https://api.spectron.example",
+    apiKey: "sk-spec-..."
+)
+
+// Record a memory, then recall it
+_ = try await memory.remember("Tobie was promoted to CTO", role: .user)
+let hits = try await memory.recall("what is Tobie's role?", k: 5)
+```
+
+The client is `Sendable` and built on Swift `async/await`. The underlying `SpectronTransport` is an actor backed by `URLSession`, and you can swap in your own `HTTPClient` for testing.
+
+The surface is grouped into `documents` (Layer 0 knowledge), `memory` (retrieval, sessions, entities, facts, lifecycle, traces), and governance (`scopes`, `principals`, `keys`). The most common operations are also exposed directly on the client as `remember`, `recall`, `rememberMany`, `forget`, and `chat`.
+
+Every method accepts an optional `onBehalfOf:` argument that performs the request as another principal (sent as the `X-Spectron-On-Behalf-Of` header), subject to your key's delegation grants. Writes to `remember` / `rememberMany` carry an `Idempotency-Key` derived from the request, so a retried write is deduplicated server-side rather than applied twice.
+
+### Documents
+
+Documents are uploaded as multipart form data. Optional metadata (`title`, `source`) is sent as a JSON part ahead of the file; the file's MIME type is inferred from the `SpectronFile` you supply.
+
+```swift
+let doc = try await memory.documents.upload(
+    file: .fileURL(URL(fileURLWithPath: "returns.pdf"), filename: nil, mimeType: "application/pdf"),
+    title: "Returns Policy",
+    source: "https://example.com/returns"
+)
+
+_ = try await memory.documents.get(doc.id)
+_ = try await memory.documents.replace(documentId: doc.id, file: .fileURL(URL(fileURLWithPath: "returns_v2.pdf"), filename: nil, mimeType: "application/pdf"))
+_ = try await memory.documents.raw(doc.id)
+_ = try await memory.documents.chunks(doc.id, page: 0, pageSize: 50)
+_ = try await memory.documents.keywordsFor(doc.id)
+_ = try await memory.documents.list(status: .ready, mimeType: "application/pdf")
+_ = try await memory.documents.recomputeLinks()
+try await memory.documents.delete(doc.id)
+```
+
+Query:
+
+```swift
+let hits = try await memory.documents.query(
+    "what is the return window for unopened items?",
+    mode: .hybridGraph,
+    k: 10,
+    threshold: 0.5,
+    vectorWeight: 0.5,
+    rrfK: 60,
+    graphAlpha: 0.3,
+    graphEdges: [.knowledgeHasKeyword, .documentLink],
+    graphDepth: 2,
+    expandGraph: true,
+    useReranker: true,
+    filter: QueryFilter(documentIds: nil, mimeType: ["application/pdf"])
+)
+```
+
+Keywords:
+
+```swift
+_ = try await memory.documents.keywords.list(minDocumentCount: 2, sort: "-document_count", q: "return")
+_ = try await memory.documents.keywords.search("refund policies", k: 10, threshold: 0.6)
+_ = try await memory.documents.keywords.get("return policy")
+```
+
+### Sessions and facts
+
+Facts are the ingestion path for memory. A fact can be free text (the server extracts entities, attributes, and relations) or a set of explicit triples.
+
+```swift
+let session = try await memory.sessions.create(scope: ["user/tobie"])
+
+_ = try await session.ingest(text: "I just got promoted to CTO", role: .user)
+
+let ctx = try await session.context("What is Tobie's role?")
+let reply = try await myLLM.chat(system: ctx.context, user: userMessage)
+_ = try await session.ingest(text: reply, role: .assistant)
+
+_ = try await session.turns()
+try await session.close()
+```
+
+Ingest without a session, or in bulk, directly on the client. `remember` and `rememberMany` are the top-level verbs; the equivalent `memory.facts.create` / `memory.facts.batch` namespace methods are also available.
+
+```swift
+_ = try await memory.remember(
+    triples: [
+        Triple(
+            entity: TripleEntity(type: "Person", name: "tobie"),
+            key: "role",
+            value: "CTO",
+            memoryCategory: .identity
+        )
+    ],
+    infer: .triples
+)
+
+_ = try await memory.rememberMany(
+    [
+        BatchMessage(role: .user, content: "I work at SurrealDB"),
+        BatchMessage(role: .assistant, content: "Noted.")
+    ],
+    extract: .wholeConversation
+)
+```
+
+Or let Spectron run the managed chat loop, which retrieves context, replies, and persists the exchange in one call:
+
+```swift
+let reply = try await session.chat("What do you know about me?")
+// or, scoped to a session id on the client:
+let reply = try await memory.chat("What do you know about me?", sessionId: session.id)
+```
+
+Chat can also stream incrementally over Server-Sent Events:
+
+```swift
+for try await chunk in try await memory.chatStream("Summarise what you know about me") {
+    if chunk.done {
+        print("\n[trace: \(chunk.traceId ?? "")]")
+    } else {
+        print(chunk.delta, terminator: "")
+    }
+}
+```
+
+### Retrieval, state, profile, entities
+
+```swift
+_ = try await memory.query("What role does Christian have?", k: 10)
+_ = try await memory.context("brief on tobie", k: 10)
+
+_ = try await memory.state()
+_ = try await memory.profile()
+
+_ = try await memory.entities.list(type: "Person")
+_ = try await memory.entities.get(type: "Person", name: "christian_battaglia")
+_ = try await memory.entities.history(type: "Person", name: "christian_battaglia", key: "role")
+try await memory.entities.delete(type: "Person", name: "christian_battaglia")
+```
+
+`entities.delete` is a soft delete.
+
+### Reflect, forget, lifecycle, maintenance, traces
+
+```swift
+_ = try await memory.reflect("patterns in customer complaints this month?", persist: true)
+_ = try await memory.forget("anything about my old job")          // purge: false by default
+
+_ = try await memory.lifecycle.expire()                            // -> affected count
+_ = try await memory.lifecycle.decay()
+
+_ = try await memory.consolidate(dryRun: true)                     // promote observations into facts
+_ = try await memory.elaborate(sweep: true, dryRun: true)          // infer new relations
+_ = try await memory.fsck()                                        // integrity report
+
+_ = try await memory.inspect(ref: "Person/tobie")                  // entity, attribute, relation, or trace
+_ = try await memory.audit(limit: 100)
+
+_ = try await memory.traces.list(limit: 50)
+_ = try await memory.traces.get("trace:abc123")
+_ = try await memory.traces.stats()
+```
+
+### Scopes, principals, and keys
+
+Governance lives under `scopes`, `principals`, and `keys`.
+
+```swift
+_ = try await memory.scopes.list()
+_ = try await memory.scopes.register(path: "org/anneal", displayName: "Anneal")
+_ = try await memory.scopes.forget(path: "org/anneal")
+try await memory.scopes.delete(path: "org/anneal")
+
+_ = try await memory.principals.list()
+_ = try await memory.principals.get("agent:reader")
+_ = try await memory.principals.effective(principalId: "agent:reader", path: "org/anneal")
+_ = try await memory.principals.grant(principalId: "agent:reader", path: "org/anneal", verbs: ["read"])
+_ = try await memory.principals.revoke(principalId: "agent:reader", path: "org/anneal", verbs: ["read"])
+```
+
+Self-service API keys. The minted secret is returned only once, at creation or rotation:
+
+```swift
+let minted = try await memory.keys.create(name: "ci", grants: ["org/anneal": ["read"]], ttlSeconds: 3600)
+// minted.key is the full bearer secret, shown only here
+
+_ = try await memory.keys.list()
+_ = try await memory.keys.rotate(minted.id, ttlSeconds: 3600)
+try await memory.keys.delete(minted.id)
+```
+
+### Delegation and identity
+
+Pass `onBehalfOf:` to any method to act as another principal, and use `whoami` to resolve the identity the server sees:
+
+```swift
+let docs = try await memory.documents.list(onBehalfOf: "agent:reader")
+let me = try await memory.whoami(onBehalfOf: "agent:reader")
+print(me.principalId, me.delegatedPrincipalId ?? "")
+```
+
+### Health
+
+```swift
+_ = try await memory.health()
+```
+
+### Errors
+
+All failures throw `SpectronError`, a single struct carrying `status`, `title`, `detail`, and `retryAfter` (plus `typeURI`, `instance`, and `extensions` for forward compatibility). The end-user API returns errors as `{ "message": "..." }`, which is surfaced as `title`. The `kind` field maps the HTTP status to one of `.base`, `.auth`, `.scope`, `.notFound`, `.validation`, `.rateLimit`, or `.server`.
+
+```swift
+do {
+    _ = try await memory.documents.get("doc:missing")
+} catch let error as SpectronError where error.isNotFound {
+    print(error.status, error.title)
+} catch let error as SpectronError where error.isRateLimit {
+    print("retry after", error.retryAfter ?? 0, "seconds")
+}
+```
+
+| Status | `kind` |
+|---|---|
+| 400, 422 | `.validation` |
+| 401 | `.auth` |
+| 403 | `.scope` |
+| 404 | `.notFound` |
+| 429 | `.rateLimit` (with `retryAfter`) |
+| 5xx | `.server` |
+
+### Retries, timeouts, scope
+
+`GET` requests retry on connection errors and 5xx responses with backoff 250ms, 500ms, 1s (up to `maxRetries`, default 3). Writes are not retried, except `remember` / `rememberMany`, which carry an `Idempotency-Key` and so are retried safely. Default request timeout is 30 seconds, overridable on the `Spectron` initialiser.
+
+Scope identifies the memory region a write targets. On requests that accept it (`remember`, `rememberMany`, `chat`, `sessions.create`), the `scope:` argument is a `Scope` value built from a single slash path, a list of paths, or key/value pairs. All forms normalise to an ordered, de-duplicated list of slash-path strings with empties dropped; omitting it uses the key's default write region.
+
+```swift
+_ = try await memory.remember("...", scope: "team/eng")
+_ = try await memory.remember("...", scope: ["team/eng", "org/acme"])
+_ = try await memory.remember("...", scope: ["org": "acme"])      // -> ["org/acme"]
+_ = try await memory.remember("...", scope: Scope(runtimePaths))  // from a [String] value
+```
+
+Sessions and scope nodes return scope the same way, as a list of slash-path strings.
+
+### Custom transport for testing
+
+`SpectronTransport` accepts any `HTTPClient`, so unit tests can replay canned responses without hitting the network:
+
+```swift
+let mock = MyMockHTTPClient()
+mock.enqueue(.json(["ok": true]))
+let transport = try SpectronTransport(endpoint: "https://example", apiKey: "k", client: mock, sleeper: { _ in })
+let client = Spectron(context: "ctx", transport: transport)
+```
+
+---
+
 ## Tests
 
 Run unit tests:
@@ -513,13 +851,14 @@ SURREALDB_RUN_INTEGRATION=1 swift test
 
 Integration environment variables:
 
-| Variable | Default |
-|---|---|
-| `SURREALDB_WS_ENDPOINT` | `ws://127.0.0.1:8000` |
-| `SURREALDB_HTTP_ENDPOINT` | `http://127.0.0.1:8000` |
-| `SURREALDB_ROOT_USER` | `root` |
-| `SURREALDB_ROOT_PASS` | `root` |
-| `SURREALDB_SKIP_SIGNIN` | _(unset)_ |
+| Variable | Default | Notes |
+|---|---|---|
+| `SURREALDB_HOST` | `127.0.0.1:8000` | `host[:port]` or a full URL with scheme. WS/HTTP endpoints are derived. |
+| `SURREALDB_NAMESPACE` | `test` | Passed to `client.use(namespace:database:)`. |
+| `SURREALDB_NAME` | `test` | Database name. |
+| `SURREALDB_USER` | _(unset)_ | If unset, sign-in is skipped. |
+| `SURREALDB_PASSWORD` | _(unset)_ | If unset, sign-in is skipped. |
+| `SURREALDB_AUTH_LEVEL` | `root` | One of `root`, `namespace` / `ns`, `database` / `db`. |
 
 ---
 

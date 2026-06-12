@@ -4,11 +4,18 @@ actor HTTPRPCEngine: RPCEngine {
     private let endpoint: URL
     private let urlSession: URLSession
     private let options: SurrealClientOptions
+    private let codec: any WireCodec
     private var isConnected = false
 
-    init(endpoint: URL, options: SurrealClientOptions, urlSession: URLSession = .shared) {
+    init(
+        endpoint: URL,
+        options: SurrealClientOptions,
+        codec: any WireCodec,
+        urlSession: URLSession = .shared
+    ) {
         self.endpoint = Endpoint.asHTTP(endpoint)
         self.options = options
+        self.codec = codec
         self.urlSession = urlSession
     }
 
@@ -27,8 +34,8 @@ actor HTTPRPCEngine: RPCEngine {
 
         var urlRequest = URLRequest(url: endpoint, timeoutInterval: options.requestTimeout)
         urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/cbor", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("application/cbor", forHTTPHeaderField: "Accept")
+        urlRequest.setValue(codec.httpContentType, forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(codec.httpContentType, forHTTPHeaderField: "Accept")
 
         if let namespace = session.namespace {
             urlRequest.setValue(namespace, forHTTPHeaderField: "Surreal-NS")
@@ -40,7 +47,7 @@ actor HTTPRPCEngine: RPCEngine {
             urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        urlRequest.httpBody = try CBORSurrealCodec.encode(request)
+        urlRequest.httpBody = try codec.encode(request)
 
         let (data, response) = try await urlSession.data(for: urlRequest)
 
@@ -53,6 +60,6 @@ actor HTTPRPCEngine: RPCEngine {
             throw SurrealError.httpError(statusCode: httpResponse.statusCode, body: body)
         }
 
-        return try CBORSurrealCodec.decodeRPCEnvelope(data)
+        return try codec.decodeEnvelope(data)
     }
 }

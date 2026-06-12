@@ -2,18 +2,19 @@
 set -euo pipefail
 
 export SURREALDB_RUN_INTEGRATION=1
-export SURREALDB_SKIP_SIGNIN=0
 
 SURREAL_PID=""
 START_MODE=""
 INTEGRATION_MODE="${SURREALDB_INTEGRATION_MODE:-auto}"
-SURREALDB_HOST="${SURREALDB_HOST:-127.0.0.1}"
+SURREALDB_BIND_HOST="${SURREALDB_BIND_HOST:-127.0.0.1}"
 SURREALDB_PORT="${SURREALDB_PORT:-8000}"
 
-export SURREALDB_WS_ENDPOINT="ws://${SURREALDB_HOST}:${SURREALDB_PORT}"
-export SURREALDB_HTTP_ENDPOINT="http://${SURREALDB_HOST}:${SURREALDB_PORT}"
-export SURREALDB_ROOT_USER="${SURREALDB_ROOT_USER:-root}"
-export SURREALDB_ROOT_PASS="${SURREALDB_ROOT_PASS:-root}"
+export SURREALDB_HOST="${SURREALDB_HOST:-${SURREALDB_BIND_HOST}:${SURREALDB_PORT}}"
+export SURREALDB_USER="${SURREALDB_USER:-root}"
+export SURREALDB_PASSWORD="${SURREALDB_PASSWORD:-root}"
+export SURREALDB_AUTH_LEVEL="${SURREALDB_AUTH_LEVEL:-root}"
+export SURREALDB_NAMESPACE="${SURREALDB_NAMESPACE:-test}"
+export SURREALDB_NAME="${SURREALDB_NAME:-test}"
 
 cleanup() {
   if [[ "$START_MODE" == "docker" ]] && command -v docker >/dev/null 2>&1; then
@@ -29,7 +30,7 @@ wait_for_surreal() {
   local max_attempts=60
   local attempt=1
 
-  until curl -fsS "${SURREALDB_HTTP_ENDPOINT}/health" >/dev/null 2>&1; do
+  until curl -fsS "http://${SURREALDB_BIND_HOST}:${SURREALDB_PORT}/health" >/dev/null 2>&1; do
     if [[ "$attempt" -ge "$max_attempts" ]]; then
       echo "SurrealDB failed to become ready after ${max_attempts} seconds."
       if [[ "$START_MODE" == "local" ]]; then
@@ -70,7 +71,7 @@ start_local_surreal() {
   fi
 
   mkdir -p .build
-  "${surreal_bin}" start --log info --user "${SURREALDB_ROOT_USER}" --pass "${SURREALDB_ROOT_PASS}" memory --bind "${SURREALDB_HOST}:${SURREALDB_PORT}" > .build/surrealdb.log 2>&1 &
+  "${surreal_bin}" start --log info --user "${SURREALDB_USER}" --pass "${SURREALDB_PASSWORD}" memory --bind "${SURREALDB_BIND_HOST}:${SURREALDB_PORT}" > .build/surrealdb.log 2>&1 &
   SURREAL_PID="$!"
   START_MODE="local"
 }
