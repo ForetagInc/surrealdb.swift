@@ -111,10 +111,10 @@ final class ScopeTests: XCTestCase {
 
     func testSessionCreateSerialisesScope() async throws {
         let http = MockHTTPClient()
-        http.enqueue(.json(["id": "sess:1", "createdAt": "t", "scope": [["org/acme"]]], status: 201))
+        http.enqueue(.json(["id": "sess:1", "createdAt": "t", "scopes": [["org/acme"]]], status: 201))
         let client = try makeClient(http)
         let session = try await client.sessions.create(scope: "org/acme")
-        XCTAssertEqual(session.info.scope, [["org/acme"]])
+        XCTAssertEqual(session.info.scopes, [["org/acme"]])
         let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
         XCTAssertEqual(body["scopes"] as? [[String]], [["org/acme"]])
     }

@@ -6,12 +6,12 @@ public struct SessionInfo: Sendable, Codable, Equatable {
     public let id: String
     /// Scope selector in disjunctive normal form (an OR of AND-clauses), echoed
     /// back from the requested selector.
-    public let scope: [[String]]
+    public let scopes: [[String]]
     public let createdAt: String
 
-    public init(id: String, scope: [[String]] = [], createdAt: String = "") {
+    public init(id: String, scopes: [[String]] = [], createdAt: String = "") {
         self.id = id
-        self.scope = scope
+        self.scopes = scopes
         self.createdAt = createdAt
     }
 }
