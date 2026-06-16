@@ -127,7 +127,7 @@ public struct Spectron: Sendable {
         asOf: String? = nil,
         atInstant: String? = nil,
         labels: [String]? = nil,
-        lens: [String]? = nil,
+        lens: Scope? = nil,
         scopeView: String? = nil,
         validFrom: String? = nil,
         validUntil: String? = nil,

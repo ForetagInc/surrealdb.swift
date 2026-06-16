@@ -29,7 +29,7 @@ public struct MemoryNamespace: Sendable {
         k: Int? = nil,
         mode: String? = nil,
         labels: [String]? = nil,
-        lens: [String]? = nil,
+        lens: Scope? = nil,
         scopeView: String? = nil,
         sessionId: String? = nil,
         source: String? = nil,
@@ -45,7 +45,9 @@ public struct MemoryNamespace: Sendable {
         if let k { payload["k"] = .int(Int64(k)) }
         if let mode { payload["mode"] = .string(mode) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let lens { payload["lens"] = .array(lens.map { .string($0) }) }
+        if let lensClauses = lens?.clauses, !lensClauses.isEmpty {
+            payload["lens"] = scopeSetsJSON(lensClauses)
+        }
         if let scopeView { payload["scopeView"] = .string(scopeView) }
         if let sessionId { payload["sessionId"] = .string(sessionId) }
         if let source { payload["source"] = .string(source) }
@@ -69,14 +71,16 @@ public struct MemoryNamespace: Sendable {
         _ query: String,
         k: Int? = nil,
         labels: [String]? = nil,
-        lens: [String]? = nil,
+        lens: Scope? = nil,
         scopeView: String? = nil,
         onBehalfOf: String? = nil
     ) async throws -> ContextResult {
         var payload: [String: JSONValue] = ["query": .string(query)]
         if let k { payload["k"] = .int(Int64(k)) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let lens { payload["lens"] = .array(lens.map { .string($0) }) }
+        if let lensClauses = lens?.clauses, !lensClauses.isEmpty {
+            payload["lens"] = scopeSetsJSON(lensClauses)
+        }
         if let scopeView { payload["scopeView"] = .string(scopeView) }
         let data = try JSONValue.encodeObject(payload)
         let (respData, _) = try await transport.request(
@@ -134,8 +138,8 @@ public struct MemoryNamespace: Sendable {
         if stream { payload["stream"] = .bool(true) }
         if let sessionId { payload["sessionId"] = .string(sessionId) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
-            payload["scope"] = .array(scopePaths.map { .string($0) })
+        if let clauses = scope?.clauses, !clauses.isEmpty {
+            payload["scopes"] = scopeSetsJSON(clauses)
         }
         if let model { payload["model"] = .string(model) }
         if let bypassCache { payload["bypassCache"] = .bool(bypassCache) }
@@ -303,8 +307,8 @@ public struct SessionsNamespace: Sendable {
 
     public func create(scope: Scope? = nil, metadata: JSONValue? = nil, onBehalfOf: String? = nil) async throws -> SpectronSession {
         var payload: [String: JSONValue] = [:]
-        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
-            payload["scope"] = .array(scopePaths.map { .string($0) })
+        if let clauses = scope?.clauses, !clauses.isEmpty {
+            payload["scopes"] = scopeSetsJSON(clauses)
         }
         if let metadata { payload["metadata"] = metadata }
         let data = try JSONValue.encodeObject(payload)
@@ -414,8 +418,8 @@ public struct FactsNamespace: Sendable {
         if let memoryCategory { payload["memory_category"] = .string(memoryCategory.rawValue) }
         if let infer { payload["infer"] = .string(infer.rawValue) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
-            payload["scope"] = .array(scopePaths.map { .string($0) })
+        if let clauses = scope?.clauses, !clauses.isEmpty {
+            payload["scopes"] = scopeSetsJSON(clauses)
         }
         if let sessionId { payload["session_id"] = .string(sessionId) }
         let data = try JSONValue.encodeObject(payload)
@@ -445,8 +449,8 @@ public struct FactsNamespace: Sendable {
         if let extract { payload["extract"] = .string(extract.rawValue) }
         if let infer { payload["infer"] = .string(infer.rawValue) }
         if let labels { payload["labels"] = .array(labels.map { .string($0) }) }
-        if let scopePaths = scope?.paths, !scopePaths.isEmpty {
-            payload["scope"] = .array(scopePaths.map { .string($0) })
+        if let clauses = scope?.clauses, !clauses.isEmpty {
+            payload["scopes"] = scopeSetsJSON(clauses)
         }
         if let sessionId { payload["session_id"] = .string(sessionId) }
         let data = try JSONValue.encodeObject(payload)

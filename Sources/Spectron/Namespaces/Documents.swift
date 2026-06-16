@@ -21,10 +21,11 @@ public struct DocumentsNamespace: Sendable {
         file: SpectronFile,
         title: String? = nil,
         source: String? = nil,
+        scope: Scope? = nil,
         onBehalfOf: String? = nil
     ) async throws -> UploadResponse {
         let (data, filename, mime) = try file.read()
-        let metadata = UploadMetadata(title: title, source: source, mimeType: mime)
+        let metadata = UploadMetadata(title: title, source: source, mimeType: mime, scopes: scopeMetadata(scope))
         var form = MultipartForm()
         try appendMetadata(metadata, to: &form)
         form.appendFile("file", filename: filename, mimeType: mime, data: data)
@@ -45,10 +46,11 @@ public struct DocumentsNamespace: Sendable {
         file: SpectronFile,
         title: String? = nil,
         source: String? = nil,
+        scope: Scope? = nil,
         onBehalfOf: String? = nil
     ) async throws -> UploadResponse {
         let (data, filename, mime) = try file.read()
-        let metadata = UploadMetadata(title: title, source: source, mimeType: mime)
+        let metadata = UploadMetadata(title: title, source: source, mimeType: mime, scopes: scopeMetadata(scope))
         var form = MultipartForm()
         try appendMetadata(metadata, to: &form)
         form.appendFile("file", filename: filename, mimeType: mime, data: data)
@@ -62,6 +64,13 @@ public struct DocumentsNamespace: Sendable {
             extraHeaders: delegationHeaders(onBehalfOf)
         )
         return try await transport.decode(UploadResponse.self, from: respData)
+    }
+
+    /// Normalised scope clauses for the metadata part, or nil when the scope is
+    /// empty so the field is omitted.
+    private func scopeMetadata(_ scope: Scope?) -> [[String]]? {
+        guard let clauses = scope?.clauses, !clauses.isEmpty else { return nil }
+        return clauses
     }
 
     private func appendMetadata(_ metadata: UploadMetadata, to form: inout MultipartForm) throws {
