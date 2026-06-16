@@ -127,16 +127,16 @@ final class EndpointTests: XCTestCase {
         let http = MockHTTPClient()
         http.enqueue(.json([
             "id": "session:abc",
-            "scope": ["user/tobie"],
+            "scopes": [["user/tobie"]],
             "createdAt": "2026-01-01T00:00:00Z"
         ], status: 201))
         let client = try makeClient(http)
-        let session = try await client.sessions.create(scope: ["user/tobie"])
+        let session = try await client.sessions.create(scope: "user/tobie")
         XCTAssertEqual(session.id, "session:abc")
-        XCTAssertEqual(session.info.scope, ["user/tobie"])
+        XCTAssertEqual(session.info.scopes, [["user/tobie"]])
 
         let body = try body(http)
-        XCTAssertEqual(body["scope"] as? [String], ["user/tobie"])
+        XCTAssertEqual(body["scopes"] as? [[String]], [["user/tobie"]])
     }
 
     func testFactsCreateUsesSnakeCaseKeys() async throws {

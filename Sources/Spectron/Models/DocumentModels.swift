@@ -46,18 +46,21 @@ public struct UploadMetadata: Sendable, Codable, Equatable {
     public let title: String?
     public let source: String?
     public let mimeType: String?
+    /// Scope selector in disjunctive normal form (an OR of AND-clauses).
+    public let scopes: [[String]]?
 
-    public init(title: String? = nil, source: String? = nil, mimeType: String? = nil) {
+    public init(title: String? = nil, source: String? = nil, mimeType: String? = nil, scopes: [[String]]? = nil) {
         self.title = title; self.source = source; self.mimeType = mimeType
+        self.scopes = scopes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case title, source
+        case title, source, scopes
         case mimeType = "mime_type"
     }
 
     var isEmpty: Bool {
-        title == nil && source == nil && mimeType == nil
+        title == nil && source == nil && mimeType == nil && scopes == nil
     }
 }
 

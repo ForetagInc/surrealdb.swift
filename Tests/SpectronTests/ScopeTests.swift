@@ -12,55 +12,55 @@ final class ScopeTests: XCTestCase {
         return Spectron(context: ctx, transport: transport)
     }
 
-    // MARK: - Normalisation (mirrors the Python scope_paths cases)
+    // MARK: - Normalisation (disjunctive normal form: an OR of AND-clauses)
 
     func testEmptyForms() {
-        XCTAssertEqual(Scope([]).paths, [])
-        XCTAssertEqual(Scope([String]()).paths, [])
-        XCTAssertEqual((Scope(pairs: [])).paths, [])
+        XCTAssertEqual(Scope([]).clauses, [])
+        XCTAssertEqual(Scope([[String]]()).clauses, [])
     }
 
-    func testStringPassthrough() {
+    func testStringIsSinglePathClause() {
         let scope: Scope = "team/eng"
-        XCTAssertEqual(scope.paths, ["team/eng"])
+        XCTAssertEqual(scope.clauses, [["team/eng"]])
     }
 
-    func testDictionaryBecomesSlashPaths() {
-        let single: Scope = ["user": "alex"]
-        XCTAssertEqual(single.paths, ["user/alex"])
-
-        // Dictionary literal preserves source order.
-        let multi: Scope = ["team": "eng", "org": "acme"]
-        XCTAssertEqual(multi.paths, ["team/eng", "org/acme"])
+    func testFlatListIsOrOfClauses() {
+        let scope: Scope = ["team/eng", "org/acme"]
+        XCTAssertEqual(scope.clauses, [["team/eng"], ["org/acme"]])
     }
 
-    func testTuplesBecomeSlashPaths() {
-        let scope = Scope(pairs: [("team", "eng"), ("org", "acme")])
-        XCTAssertEqual(scope.paths, ["team/eng", "org/acme"])
+    func testNestedListIsAndClause() {
+        let scope: Scope = [["team/eng", "org/acme"]]
+        XCTAssertEqual(scope.clauses, [["team/eng", "org/acme"]])
+    }
+
+    func testMixedLiteralCombinesOrAndAnd() {
+        let scope: Scope = ["team/eng", ["org/acme", "tier/gold"]]
+        XCTAssertEqual(scope.clauses, [["team/eng"], ["org/acme", "tier/gold"]])
     }
 
     func testDedupPreservesOrder() {
         let scope: Scope = ["org/acme", "team/eng", "org/acme"]
-        XCTAssertEqual(scope.paths, ["org/acme", "team/eng"])
+        XCTAssertEqual(scope.clauses, [["org/acme"], ["team/eng"]])
     }
 
     func testDropsEmpties() {
-        let scope: Scope = ["", "team/eng"]
-        XCTAssertEqual(scope.paths, ["team/eng"])
+        let scope: Scope = ["", "team/eng", [""]]
+        XCTAssertEqual(scope.clauses, [["team/eng"]])
     }
 
     // MARK: - Wire serialisation
 
-    func testRememberSerialisesDictScopeToSlashPaths() async throws {
+    func testRememberSerialisesScopesAsDNF() async throws {
         let http = MockHTTPClient()
         http.enqueue(.json(["sessionId": "s", "mode": "full"]))
         let client = try makeClient(http)
-        _ = try await client.remember("x", scope: ["org": "acme"])
+        _ = try await client.remember("x", scope: "org/acme")
         let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
-        XCTAssertEqual(body["scope"] as? [String], ["org/acme"])
+        XCTAssertEqual(body["scopes"] as? [[String]], [["org/acme"]])
     }
 
-    func testChatPassesPathListUnchanged() async throws {
+    func testFlatScopeSerialisesAsOrClauses() async throws {
         let http = MockHTTPClient()
         http.enqueue(.json([
             "reply": "ok", "sessionId": "s", "traceId": "t",
@@ -72,7 +72,16 @@ final class ScopeTests: XCTestCase {
         let client = try makeClient(http)
         _ = try await client.chat("y", scope: ["team/acme", "project/x"])
         let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
-        XCTAssertEqual(body["scope"] as? [String], ["team/acme", "project/x"])
+        XCTAssertEqual(body["scopes"] as? [[String]], [["team/acme"], ["project/x"]])
+    }
+
+    func testNestedScopeSerialisesAsAndClause() async throws {
+        let http = MockHTTPClient()
+        http.enqueue(.json(["sessionId": "s", "mode": "full"]))
+        let client = try makeClient(http)
+        _ = try await client.remember("x", scope: [["team/acme", "project/x"]])
+        let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
+        XCTAssertEqual(body["scopes"] as? [[String]], [["team/acme", "project/x"]])
     }
 
     func testEmptyScopeOmittedFromPayload() async throws {
@@ -81,16 +90,32 @@ final class ScopeTests: XCTestCase {
         let client = try makeClient(http)
         _ = try await client.remember("x", scope: [])
         let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
-        XCTAssertNil(body["scope"])
+        XCTAssertNil(body["scopes"])
+    }
+
+    func testRecallSerialisesLensAsDNF() async throws {
+        let http = MockHTTPClient()
+        http.enqueue(.json([
+            "hits": [], "tier": "direct", "classificationKind": "direct_lookup",
+            "seedEntities": [], "queryMs": 3,
+            "trace": [
+                "traceId": "t", "resolutionTier": "direct", "tierReason": "r",
+                "latencyMs": 3, "retrievedCount": 0, "topScores": []
+            ]
+        ]))
+        let client = try makeClient(http)
+        _ = try await client.recall("q", lens: ["team/eng", ["org/acme", "tier/gold"]])
+        let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
+        XCTAssertEqual(body["lens"] as? [[String]], [["team/eng"], ["org/acme", "tier/gold"]])
     }
 
     func testSessionCreateSerialisesScope() async throws {
         let http = MockHTTPClient()
-        http.enqueue(.json(["id": "sess:1", "createdAt": "t", "scope": ["org/acme"]], status: 201))
+        http.enqueue(.json(["id": "sess:1", "createdAt": "t", "scopes": [["org/acme"]]], status: 201))
         let client = try makeClient(http)
-        let session = try await client.sessions.create(scope: ["org": "acme"])
-        XCTAssertEqual(session.info.scope, ["org/acme"])
+        let session = try await client.sessions.create(scope: "org/acme")
+        XCTAssertEqual(session.info.scopes, [["org/acme"]])
         let body = try JSONSerialization.jsonObject(with: http.recorded.first!.body!) as! [String: Any]
-        XCTAssertEqual(body["scope"] as? [String], ["org/acme"])
+        XCTAssertEqual(body["scopes"] as? [[String]], [["org/acme"]])
     }
 }
