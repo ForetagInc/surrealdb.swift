@@ -249,7 +249,9 @@ actor SurrealClientCore {
                 } else {
                     message = "Unknown query error"
                 }
-                errors.append(QueryErrorDetail(index: index, message: message, details: row.details))
+                errors.append(
+                    QueryErrorDetail(index: index, message: message, kind: row.kind, details: row.details)
+                )
                 continue
             }
 

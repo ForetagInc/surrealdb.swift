@@ -3,7 +3,20 @@ import Foundation
 public struct QueryErrorDetail: Sendable, Hashable {
     public let index: Int
     public let message: String
+    public let kind: String?
     public let details: SurrealValue?
+
+    public init(index: Int, message: String, kind: String? = nil, details: SurrealValue?) {
+        self.index = index
+        self.message = message
+        self.kind = kind
+        self.details = details
+    }
+
+    /// The typed error taxonomy for this statement's failure. See ``ServerErrorKind``.
+    public var typedKind: ServerErrorKind {
+        ServerErrorKind.parse(kind: kind, details: details)
+    }
 }
 
 public enum SurrealError: Error, Sendable {
@@ -62,6 +75,20 @@ public enum SurrealError: Error, Sendable {
             return false
         }
     }
+
+    /// The typed server error taxonomy, when this is a `.serverError`.
+    ///
+    /// Replaces string-comparing the raw `kind` on `RPCErrorObject` with a typed
+    /// hierarchy (see ``ServerErrorKind``) that distinguishes, for example, an
+    /// expired auth token from a generic invalid-auth failure, a not-found resource
+    /// from an already-exists conflict, or a retryable transaction conflict from
+    /// another query failure.
+    public var serverErrorKind: ServerErrorKind? {
+        guard case .serverError(let payload) = self else {
+            return nil
+        }
+        return payload.typedKind
+    }
 }
 
 extension SurrealError: LocalizedError {
@@ -70,7 +97,7 @@ extension SurrealError: LocalizedError {
     public var failureReason: String? {
         switch self {
         case .serverError(let obj):
-            return obj.kind.map { "Server error kind: \($0)" }
+            return "Server error kind: \(obj.typedKind)"
         case .queryErrors(let errors):
             return errors.map { "#\($0.index): \($0.message)" }.joined(separator: "\n")
         case .connectionLost(let cause):
@@ -92,6 +119,10 @@ extension SurrealError: LocalizedError {
             return "Check network connectivity and retry."
         case .httpError(401, _):
             return "Re-authenticate and retry."
+        case .serverError(let obj) where obj.typedKind.isTokenExpired || obj.typedKind.isSessionExpired:
+            return "Re-authenticate and retry."
+        case .serverError(let obj) where obj.typedKind.isTransactionConflict:
+            return "Safe to retry: a concurrent transaction modified the same data."
         case .timeout:
             return "Retry the operation or increase requestTimeout in SurrealClientOptions."
         default:
