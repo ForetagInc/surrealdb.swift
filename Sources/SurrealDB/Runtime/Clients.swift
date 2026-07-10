@@ -80,8 +80,12 @@ public actor SurrealClient: SurrealLiveQueryable {
         try await core.listSessions()
     }
 
-    /// Attaches a handle to a session id obtained elsewhere (e.g. from
-    /// `sessions()`), without validating that it still exists.
+    /// Re-attaches a handle to a session previously created by this client
+    /// (e.g. an id returned from `sessions()`), without validating that it
+    /// still exists. Session state is tracked per client instance, so ids
+    /// from other clients or connections cannot be adopted here — operations
+    /// on such a handle throw `SurrealError.invalidSession`, and its
+    /// `isValid` reports `false`.
     public nonisolated func session(id: SessionID) -> SurrealSession {
         SurrealSession(core: core, id: id)
     }

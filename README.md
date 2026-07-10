@@ -291,6 +291,8 @@ try await session.unset("minAge")
 
 `set`/`unset` are also available on `SurrealClient` itself, scoped to the default session.
 
+Variables are merged into each query's bindings client-side — they are not server-side `LET` parameters. Contexts the server evaluates on its own (for example live-query permission clauses referencing `$minAge`) won't see them. This differs from the JavaScript SDK, whose `set`/`unset` issue server-side RPCs.
+
 ### Closing a session
 
 ```swift
@@ -308,8 +310,14 @@ let result = try await client.newSession().withSession { session in
 
 ```swift
 let ids = try await client.sessions()          // session ids attached to this connection
-let handle = client.session(id: ids[0])         // attach a handle without re-validating it
+let handle = client.session(id: ids[0])         // re-attach a handle without re-validating it
 ```
+
+Session state is tracked per client instance: `session(id:)` only works for ids this client created (sessions are scoped to their connection, so an id from another client can't exist here anyway). A handle around a closed or foreign id throws `SurrealError.invalidSession` on use, and its `isValid` reports `false`.
+
+### Reconnection behaviour
+
+When the WebSocket reconnects after a drop, the client automatically re-attaches every session and replays its namespace/database selection and authentication. Bound variables live client-side, so they survive reconnects without any replay. Live queries are **not** re-registered — their streams finish when the connection drops and must be re-opened by the caller.
 
 `SurrealSession` conforms to the same `SurrealQueryable`/`SurrealLiveQueryable` protocols as `SurrealClient`, so every query, CRUD, and live-query method shown elsewhere in this README works identically on a session.
 

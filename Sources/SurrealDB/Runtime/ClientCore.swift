@@ -19,9 +19,13 @@ actor SurrealClientCore {
             return
         }
 
+        // Subscribe before returning, not inside the task: otherwise a
+        // reconnect that fires between connect() returning and the task
+        // starting is silently dropped.
+        let stream = await liveEngine.reconnectEvents()
+
         reconnectReplayTask?.cancel()
         reconnectReplayTask = Task { [weak self] in
-            let stream = await liveEngine.reconnectEvents()
             for await _ in stream {
                 guard let self else { return }
                 await self.beginReplay()
@@ -86,7 +90,10 @@ actor SurrealClientCore {
                 sessions[newID]?.variables = sourceContext.variables
             }
         } catch {
-            try? await sendDetach(newID)
+            // Roll back the half-created session: detach server-side (the
+            // local entry is still registered here, so performRPC resolves
+            // it), then forget it locally. The original error wins.
+            _ = try? await performRPC("detach", session: newID)
             sessions.removeValue(forKey: newID)
             throw error
         }
@@ -95,6 +102,12 @@ actor SurrealClientCore {
     }
 
     func destroySession(_ id: SessionID) async throws {
+        guard engine is any SessionCapableRPCEngine else {
+            throw SurrealError.unsupportedFeature(
+                "Sessions require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+            )
+        }
+
         _ = try await rpc("detach", session: id)
         sessions.removeValue(forKey: id)
     }
@@ -126,16 +139,11 @@ actor SurrealClientCore {
         }
     }
 
+    /// Sends the raw `attach` RPC. Can't route through `performRPC`: the id
+    /// isn't registered in `sessions` yet at attach time (and during
+    /// reconnect replay, re-attaching must not depend on lookup state).
     private func sendAttach(_ id: SessionID) async throws {
         let request = RPCRequest(id: UUID().uuidString, method: "attach", params: nil, session: id.rawValue.uuidString, txn: nil)
-        let envelope = try await engine.send(request, session: rootSession)
-        if let error = envelope.error {
-            throw SurrealError.serverError(error)
-        }
-    }
-
-    private func sendDetach(_ id: SessionID) async throws {
-        let request = RPCRequest(id: UUID().uuidString, method: "detach", params: nil, session: id.rawValue.uuidString, txn: nil)
         let envelope = try await engine.send(request, session: rootSession)
         if let error = envelope.error {
             throw SurrealError.serverError(error)
@@ -162,12 +170,23 @@ actor SurrealClientCore {
         }
     }
 
+    /// Replays a session's stored state onto a freshly reconnected socket.
+    /// Uses `performRPC` (not `rpc`) so the replay can't gate on itself, and
+    /// skips the local context mutation the public `use`/`authenticate` do —
+    /// the stored context already holds exactly the values being replayed.
     private func replay(session: SessionID?, context: SessionContext) async {
         if context.namespace != nil || context.database != nil {
-            try? await use(namespace: context.namespace, database: context.database, session: session)
+            _ = try? await performRPC(
+                "use",
+                params: [
+                    context.namespace.map(SurrealValue.string) ?? .none,
+                    context.database.map(SurrealValue.string) ?? .none,
+                ],
+                session: session
+            )
         }
         if let token = context.accessToken {
-            try? await authenticate(token, session: session)
+            _ = try? await performRPC("authenticate", params: [.string(token)], session: session)
         }
     }
 
@@ -381,6 +400,14 @@ actor SurrealClientCore {
             await activeReplay.value
         }
 
+        return try await performRPC(method, params: params, session: session)
+    }
+
+    /// Ungated variant of `rpc`. The reconnect-replay path must use this
+    /// directly: its own `use`/`authenticate` calls would otherwise hit the
+    /// `activeReplay` gate above and await the replay task from within the
+    /// replay task — deadlocking the whole client.
+    private func performRPC(_ method: String, params: [SurrealValue]? = nil, session: SessionID?) async throws -> SurrealValue {
         let context = try sessionContext(for: session)
         let request = RPCRequest(
             id: UUID().uuidString,
