@@ -7,7 +7,7 @@ import Foundation
 /// the request/response HTTP engine, which does not support live queries; on
 /// those endpoints `live(_:)` throws `SurrealError.unsupportedFeature`.
 public actor SurrealClient: SurrealLiveQueryable {
-    private let core: SurrealClientCore
+    private nonisolated let core: SurrealClientCore
 
     /// The transport selected for the endpoint.
     public enum Engine: Sendable, Equatable {
@@ -17,6 +17,9 @@ public actor SurrealClient: SurrealLiveQueryable {
 
     /// The engine chosen from the endpoint scheme at initialisation.
     public nonisolated let engine: Engine
+
+    /// This client is always scoped to the connection's default/root session.
+    public nonisolated let id: SessionID? = nil
 
     public init(
         endpoint: String,
@@ -62,38 +65,67 @@ public actor SurrealClient: SurrealLiveQueryable {
         await core.close()
     }
 
+    /// Creates a new, blank session multiplexed over this same connection —
+    /// its namespace, database, authentication, and variables all start
+    /// empty. Only available on WebSocket endpoints.
+    public func newSession() async throws -> SurrealSession {
+        let id = try await core.createSession(cloneFrom: nil)
+        return SurrealSession(core: core, id: id)
+    }
+
+    /// Lists the session ids currently attached to this connection (not
+    /// including the default/root session). Only available on WebSocket
+    /// endpoints.
+    public func sessions() async throws -> [SessionID] {
+        try await core.listSessions()
+    }
+
+    /// Attaches a handle to a session id obtained elsewhere (e.g. from
+    /// `sessions()`), without validating that it still exists.
+    public nonisolated func session(id: SessionID) -> SurrealSession {
+        SurrealSession(core: core, id: id)
+    }
+
     public func use(namespace: String?, database: String?) async throws {
-        try await core.use(namespace: namespace, database: database)
+        try await core.use(namespace: namespace, database: database, session: nil)
     }
 
     public func signin(_ credentials: SignInCredentials) async throws -> AuthTokens {
-        try await core.signin(credentials)
+        try await core.signin(credentials, session: nil)
     }
 
     public func signup(_ credentials: SignUpCredentials) async throws -> AuthTokens {
-        try await core.signup(credentials)
+        try await core.signup(credentials, session: nil)
     }
 
     public func authenticate(_ token: String) async throws {
-        try await core.authenticate(token)
+        try await core.authenticate(token, session: nil)
     }
 
     public func invalidate() async throws {
-        try await core.invalidate()
+        try await core.invalidate(session: nil)
+    }
+
+    public func set(_ name: String, value: SurrealValue) async throws {
+        try await core.set(name, value: value, session: nil)
+    }
+
+    public func unset(_ name: String) async throws {
+        try await core.unset(name, session: nil)
     }
 
     public func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>) async throws -> [T] {
-        try await core.query(query)
+        try await core.query(query, session: nil)
     }
 
     public func queryRaw(_ sql: String, bindings: [String: SurrealValue] = [:]) async throws -> [RPCQueryResult] {
-        try await core.queryRaw(sql, bindings: bindings)
+        try await core.queryRaw(sql, bindings: bindings, session: nil)
     }
 
     public func transaction(
         _ build: @Sendable (SurrealTransaction) throws -> Void
     ) async throws -> [RPCQueryResult] {
-        try await core.transaction(build)
+        try await core.transaction(build, session: nil)
     }
 
     public func select<Model: SurrealModel & Decodable & Sendable>(
@@ -102,25 +134,25 @@ public actor SurrealClient: SurrealLiveQueryable {
         limit: Int? = nil,
         start: Int? = nil
     ) async throws -> [Model] {
-        try await core.select(model, where: predicate, limit: limit, start: start)
+        try await core.select(model, where: predicate, limit: limit, start: start, session: nil)
     }
 
     public func create<Model: SurrealModel & Codable & Sendable>(_ value: Model) async throws -> [Model] {
-        try await core.create(value)
+        try await core.create(value, session: nil)
     }
 
     public func select<Model: SurrealModel & Decodable & Sendable>(
         recordID: SurrealRecordID,
         as model: Model.Type
     ) async throws -> Model? {
-        try await core.select(recordID: recordID, as: model)
+        try await core.select(recordID: recordID, as: model, session: nil)
     }
 
     public func create<Model: SurrealModel & Codable & Sendable>(
         recordID: SurrealRecordID,
         content: Model
     ) async throws -> Model? {
-        try await core.create(recordID: recordID, content: content)
+        try await core.create(recordID: recordID, content: content, session: nil)
     }
 
     public func update<Model: SurrealModel & Codable & Sendable>(
@@ -128,7 +160,7 @@ public actor SurrealClient: SurrealLiveQueryable {
         content: Model,
         where predicate: SurrealPredicate? = nil
     ) async throws -> [Model] {
-        try await core.update(model, content: content, where: predicate)
+        try await core.update(model, content: content, where: predicate, session: nil)
     }
 
     public func upsert<Model: SurrealModel & Codable & Sendable>(
@@ -136,44 +168,44 @@ public actor SurrealClient: SurrealLiveQueryable {
         content: Model,
         where predicate: SurrealPredicate? = nil
     ) async throws -> [Model] {
-        try await core.upsert(model, content: content, where: predicate)
+        try await core.upsert(model, content: content, where: predicate, session: nil)
     }
 
     public func delete<Model: SurrealModel & Decodable & Sendable>(
         _ model: Model.Type,
         where predicate: SurrealPredicate? = nil
     ) async throws -> [Model] {
-        try await core.delete(model, where: predicate)
+        try await core.delete(model, where: predicate, session: nil)
     }
 
     public func update<Model: SurrealModel & Codable & Sendable>(
         recordID: SurrealRecordID,
         content: Model
     ) async throws -> Model? {
-        try await core.update(recordID: recordID, content: content)
+        try await core.update(recordID: recordID, content: content, session: nil)
     }
 
     public func upsert<Model: SurrealModel & Codable & Sendable>(
         recordID: SurrealRecordID,
         content: Model
     ) async throws -> Model? {
-        try await core.upsert(recordID: recordID, content: content)
+        try await core.upsert(recordID: recordID, content: content, session: nil)
     }
 
     public func delete<Model: SurrealModel & Decodable & Sendable>(
         recordID: SurrealRecordID,
         as model: Model.Type
     ) async throws -> Model? {
-        try await core.delete(recordID: recordID, as: model)
+        try await core.delete(recordID: recordID, as: model, session: nil)
     }
 
     /// Opens a live query stream. Throws `SurrealError.unsupportedFeature` when
     /// the client was created with an HTTP endpoint.
     public func live<T: Decodable & Sendable>(_ query: LiveQuery<T>) async throws -> AsyncStream<LiveEvent<T>> {
-        try await core.live(query)
+        try await core.live(query, session: nil)
     }
 
     public func kill(liveQueryID: UUID) async throws {
-        try await core.kill(liveQueryID: liveQueryID)
+        try await core.kill(liveQueryID: liveQueryID, session: nil)
     }
 }

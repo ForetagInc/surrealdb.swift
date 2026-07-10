@@ -30,6 +30,7 @@ public enum SurrealError: Error, Sendable {
     case serverError(RPCErrorObject)
     case queryErrors([QueryErrorDetail])
     case timeout
+    case invalidSession(SessionID)
 
     public var message: String {
         switch self {
@@ -62,6 +63,8 @@ public enum SurrealError: Error, Sendable {
             return "\(errors.count) query statements failed (at \(indices))"
         case .timeout:
             return "The request timed out."
+        case .invalidSession(let id):
+            return "No such session: \(id)."
         }
     }
 
@@ -125,6 +128,8 @@ extension SurrealError: LocalizedError {
             return "Safe to retry: a concurrent transaction modified the same data."
         case .timeout:
             return "Retry the operation or increase requestTimeout in SurrealClientOptions."
+        case .invalidSession:
+            return "The session was closed or never existed; create a new one via newSession()/forkSession()."
         default:
             return nil
         }

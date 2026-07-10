@@ -29,6 +29,18 @@ public struct SurrealWebSocketOptions: Sendable {
     }
 }
 
+/// Identifies a logical session multiplexed over the same physical connection.
+/// `nil` refers to the connection's default/root session.
+public struct SessionID: Hashable, Sendable, CustomStringConvertible {
+    public let rawValue: UUID
+
+    public init(_ rawValue: UUID = UUID()) {
+        self.rawValue = rawValue
+    }
+
+    public var description: String { rawValue.uuidString }
+}
+
 public struct SessionContext: Sendable {
     public var namespace: String?
     public var database: String?

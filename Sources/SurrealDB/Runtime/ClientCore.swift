@@ -2,68 +2,240 @@ import Foundation
 
 actor SurrealClientCore {
     private let engine: any RPCEngine
-    private var sessionContext: SessionContext
+    private var rootSession: SessionContext
+    private var sessions: [SessionID: SessionContext] = [:]
+    private var reconnectReplayTask: Task<Void, Never>?
+    private var activeReplay: Task<Void, Never>?
 
     init(engine: any RPCEngine, sessionContext: SessionContext = .init()) {
         self.engine = engine
-        self.sessionContext = sessionContext
+        self.rootSession = sessionContext
     }
 
     func connect() async throws {
         try await engine.connect()
+
+        guard let liveEngine = engine as? any LiveRPCEngine else {
+            return
+        }
+
+        reconnectReplayTask?.cancel()
+        reconnectReplayTask = Task { [weak self] in
+            let stream = await liveEngine.reconnectEvents()
+            for await _ in stream {
+                guard let self else { return }
+                await self.beginReplay()
+            }
+        }
     }
 
     func close() async {
+        reconnectReplayTask?.cancel()
+        reconnectReplayTask = nil
         await engine.close()
     }
 
-    func use(namespace: String?, database: String?) async throws {
+    // MARK: - Session state lookup/mutation
+
+    private func sessionContext(for session: SessionID?) throws -> SessionContext {
+        guard let session else {
+            return rootSession
+        }
+        guard let context = sessions[session] else {
+            throw SurrealError.invalidSession(session)
+        }
+        return context
+    }
+
+    private func setSessionContext(for session: SessionID?, _ mutate: (inout SessionContext) -> Void) {
+        if let session {
+            guard sessions[session] != nil else { return }
+            mutate(&sessions[session]!)
+        } else {
+            mutate(&rootSession)
+        }
+    }
+
+    func hasSession(_ id: SessionID) -> Bool {
+        sessions[id] != nil
+    }
+
+    // MARK: - Session lifecycle
+
+    func createSession(cloneFrom source: SessionID?) async throws -> SessionID {
+        guard engine is any SessionCapableRPCEngine else {
+            throw SurrealError.unsupportedFeature(
+                "Sessions require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+            )
+        }
+
+        let sourceContext = try sessionContext(for: source)
+        let newID = SessionID()
+
+        try await sendAttach(newID)
+        sessions[newID] = SessionContext()
+
+        do {
+            if source != nil {
+                if sourceContext.namespace != nil || sourceContext.database != nil {
+                    try await use(namespace: sourceContext.namespace, database: sourceContext.database, session: newID)
+                }
+                if let token = sourceContext.accessToken {
+                    try await authenticate(token, session: newID)
+                }
+                sessions[newID]?.variables = sourceContext.variables
+            }
+        } catch {
+            try? await sendDetach(newID)
+            sessions.removeValue(forKey: newID)
+            throw error
+        }
+
+        return newID
+    }
+
+    func destroySession(_ id: SessionID) async throws {
+        _ = try await rpc("detach", session: id)
+        sessions.removeValue(forKey: id)
+    }
+
+    func listSessions() async throws -> [SessionID] {
+        guard engine is any SessionCapableRPCEngine else {
+            throw SurrealError.unsupportedFeature(
+                "Sessions require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+            )
+        }
+
+        let response = try await rpc("sessions", session: nil)
+        guard case .array(let values) = response else {
+            throw SurrealError.invalidResponse("Expected an array of session ids.")
+        }
+
+        return try values.map { value in
+            switch value {
+            case .uuid(let uuid):
+                return SessionID(uuid)
+            case .string(let raw):
+                guard let uuid = UUID(uuidString: raw) else {
+                    throw SurrealError.invalidResponse("Session id is not a UUID: \(raw)")
+                }
+                return SessionID(uuid)
+            default:
+                throw SurrealError.invalidResponse("Unexpected session id format.")
+            }
+        }
+    }
+
+    private func sendAttach(_ id: SessionID) async throws {
+        let request = RPCRequest(id: UUID().uuidString, method: "attach", params: nil, session: id.rawValue.uuidString, txn: nil)
+        let envelope = try await engine.send(request, session: rootSession)
+        if let error = envelope.error {
+            throw SurrealError.serverError(error)
+        }
+    }
+
+    private func sendDetach(_ id: SessionID) async throws {
+        let request = RPCRequest(id: UUID().uuidString, method: "detach", params: nil, session: id.rawValue.uuidString, txn: nil)
+        let envelope = try await engine.send(request, session: rootSession)
+        if let error = envelope.error {
+            throw SurrealError.serverError(error)
+        }
+    }
+
+    // MARK: - Reconnect replay
+
+    private func beginReplay() async {
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.replayAllSessions()
+        }
+        activeReplay = task
+        await task.value
+        activeReplay = nil
+    }
+
+    private func replayAllSessions() async {
+        await replay(session: nil, context: rootSession)
+        for (id, context) in sessions {
+            try? await sendAttach(id)
+            await replay(session: id, context: context)
+        }
+    }
+
+    private func replay(session: SessionID?, context: SessionContext) async {
+        if context.namespace != nil || context.database != nil {
+            try? await use(namespace: context.namespace, database: context.database, session: session)
+        }
+        if let token = context.accessToken {
+            try? await authenticate(token, session: session)
+        }
+    }
+
+    // MARK: - Session-scoped operations
+
+    func use(namespace: String?, database: String?, session: SessionID?) async throws {
         _ = try await rpc(
             "use",
             params: [
                 namespace.map(SurrealValue.string) ?? .none,
                 database.map(SurrealValue.string) ?? .none,
-            ]
+            ],
+            session: session
         )
 
-        if let namespace {
-            sessionContext.namespace = namespace
-        }
-        if let database {
-            sessionContext.database = database
+        setSessionContext(for: session) { context in
+            if let namespace {
+                context.namespace = namespace
+            }
+            if let database {
+                context.database = database
+            }
         }
     }
 
-    func signin(_ credentials: SignInCredentials) async throws -> AuthTokens {
-        let payload = try credentials.payload(using: sessionContext)
-        let response = try await rpc("signin", params: [payload])
+    func signin(_ credentials: SignInCredentials, session: SessionID?) async throws -> AuthTokens {
+        let context = try sessionContext(for: session)
+        let payload = try credentials.payload(using: context)
+        let response = try await rpc("signin", params: [payload], session: session)
 
         let tokens = try parseAuthTokens(response)
-        sessionContext.accessToken = tokens.access
+        setSessionContext(for: session) { $0.accessToken = tokens.access }
         return tokens
     }
 
-    func signup(_ credentials: SignUpCredentials) async throws -> AuthTokens {
-        let payload = try credentials.payload(using: sessionContext)
-        let response = try await rpc("signup", params: [payload])
+    func signup(_ credentials: SignUpCredentials, session: SessionID?) async throws -> AuthTokens {
+        let context = try sessionContext(for: session)
+        let payload = try credentials.payload(using: context)
+        let response = try await rpc("signup", params: [payload], session: session)
 
         let tokens = try parseAuthTokens(response)
-        sessionContext.accessToken = tokens.access
+        setSessionContext(for: session) { $0.accessToken = tokens.access }
         return tokens
     }
 
-    func authenticate(_ token: String) async throws {
-        _ = try await rpc("authenticate", params: [.string(token)])
-        sessionContext.accessToken = token
+    func authenticate(_ token: String, session: SessionID?) async throws {
+        _ = try await rpc("authenticate", params: [.string(token)], session: session)
+        setSessionContext(for: session) { $0.accessToken = token }
     }
 
-    func invalidate() async throws {
-        _ = try await rpc("invalidate")
-        sessionContext.accessToken = nil
+    func invalidate(session: SessionID?) async throws {
+        _ = try await rpc("invalidate", session: session)
+        setSessionContext(for: session) { $0.accessToken = nil }
     }
 
-    func queryRaw(_ sql: String, bindings: [String: SurrealValue]) async throws -> [RPCQueryResult] {
-        var mergedBindings = sessionContext.variables
+    func set(_ name: String, value: SurrealValue, session: SessionID?) async throws {
+        _ = try sessionContext(for: session)
+        setSessionContext(for: session) { $0.variables[name] = value }
+    }
+
+    func unset(_ name: String, session: SessionID?) async throws {
+        _ = try sessionContext(for: session)
+        setSessionContext(for: session) { $0.variables.removeValue(forKey: name) }
+    }
+
+    func queryRaw(_ sql: String, bindings: [String: SurrealValue], session: SessionID?) async throws -> [RPCQueryResult] {
+        let context = try sessionContext(for: session)
+        var mergedBindings = context.variables
         for (key, value) in bindings {
             mergedBindings[key] = value
         }
@@ -73,21 +245,25 @@ actor SurrealClientCore {
             params: [
                 .string(sql),
                 .object(mergedBindings),
-            ]
+            ],
+            session: session
         )
 
         return try RPCWire.decodeQueryResults(from: response)
     }
 
-    func transaction(_ build: (SurrealTransaction) throws -> Void) async throws -> [RPCQueryResult] {
+    func transaction(
+        _ build: (SurrealTransaction) throws -> Void,
+        session: SessionID?
+    ) async throws -> [RPCQueryResult] {
         let tx = SurrealTransaction()
         try build(tx)
         let (sql, bindings) = tx.build()
-        return try await queryRaw(sql, bindings: bindings)
+        return try await queryRaw(sql, bindings: bindings, session: session)
     }
 
-    func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>) async throws -> [T] {
-        let results = try await queryRaw(query.sql, bindings: query.bindings)
+    func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>, session: SessionID?) async throws -> [T] {
+        let results = try await queryRaw(query.sql, bindings: query.bindings, session: session)
         return try decodeQueryResults(results, as: T.self)
     }
 
@@ -95,112 +271,126 @@ actor SurrealClientCore {
         _ model: Model.Type,
         where predicate: SurrealPredicate?,
         limit: Int?,
-        start: Int?
+        start: Int?,
+        session: SessionID?
     ) async throws -> [Model] {
         let query = SurrealDSL.select(model, where: predicate, limit: limit, start: start)
-        return try await self.query(query)
+        return try await self.query(query, session: session)
     }
 
-    func create<Model: SurrealModel & Codable & Sendable>(_ value: Model) async throws -> [Model] {
+    func create<Model: SurrealModel & Codable & Sendable>(_ value: Model, session: SessionID?) async throws -> [Model] {
         let content = try SurrealValue.fromEncodable(value)
         let query = SurrealDSL.create(Model.self, bindings: ["content": content])
-        return try await self.query(query)
+        return try await self.query(query, session: session)
     }
 
     func select<Model: SurrealModel & Decodable & Sendable>(
         recordID: SurrealRecordID,
-        as model: Model.Type
+        as model: Model.Type,
+        session: SessionID?
     ) async throws -> Model? {
         let query = SurrealQuery<Model>(sql: "SELECT * FROM \(recordID.rawValue) LIMIT 1;")
-        return try await self.query(query).first
+        return try await self.query(query, session: session).first
     }
 
     func create<Model: SurrealModel & Codable & Sendable>(
         recordID: SurrealRecordID,
-        content: Model
+        content: Model,
+        session: SessionID?
     ) async throws -> Model? {
         let payload = try SurrealValue.fromEncodable(content)
         let query = SurrealQuery<Model>(
             sql: "CREATE \(recordID.rawValue) CONTENT $content;",
             bindings: ["content": payload]
         )
-        return try await self.query(query).first
+        return try await self.query(query, session: session).first
     }
 
     func update<Model: SurrealModel & Codable & Sendable>(
         _ model: Model.Type,
         content: Model,
-        where predicate: SurrealPredicate?
+        where predicate: SurrealPredicate?,
+        session: SessionID?
     ) async throws -> [Model] {
         let payload = try SurrealValue.fromEncodable(content)
         let query = SurrealDSL.update(model, where: predicate, bindings: ["content": payload])
-        return try await self.query(query)
+        return try await self.query(query, session: session)
     }
 
     func upsert<Model: SurrealModel & Codable & Sendable>(
         _ model: Model.Type,
         content: Model,
-        where predicate: SurrealPredicate?
+        where predicate: SurrealPredicate?,
+        session: SessionID?
     ) async throws -> [Model] {
         let payload = try SurrealValue.fromEncodable(content)
         let query = SurrealDSL.upsert(model, where: predicate, bindings: ["content": payload])
-        return try await self.query(query)
+        return try await self.query(query, session: session)
     }
 
     func delete<Model: SurrealModel & Decodable & Sendable>(
         _ model: Model.Type,
-        where predicate: SurrealPredicate?
+        where predicate: SurrealPredicate?,
+        session: SessionID?
     ) async throws -> [Model] {
         let query = SurrealDSL.delete(model, where: predicate)
-        return try await self.query(query)
+        return try await self.query(query, session: session)
     }
 
     func update<Model: SurrealModel & Codable & Sendable>(
         recordID: SurrealRecordID,
-        content: Model
+        content: Model,
+        session: SessionID?
     ) async throws -> Model? {
         let payload = try SurrealValue.fromEncodable(content)
         let query = SurrealQuery<Model>(
             sql: "UPDATE \(recordID.rawValue) CONTENT $content;",
             bindings: ["content": payload]
         )
-        return try await self.query(query).first
+        return try await self.query(query, session: session).first
     }
 
     func upsert<Model: SurrealModel & Codable & Sendable>(
         recordID: SurrealRecordID,
-        content: Model
+        content: Model,
+        session: SessionID?
     ) async throws -> Model? {
         let payload = try SurrealValue.fromEncodable(content)
         let query = SurrealQuery<Model>(
             sql: "UPSERT \(recordID.rawValue) CONTENT $content;",
             bindings: ["content": payload]
         )
-        return try await self.query(query).first
+        return try await self.query(query, session: session).first
     }
 
     func delete<Model: SurrealModel & Decodable & Sendable>(
         recordID: SurrealRecordID,
-        as model: Model.Type
+        as model: Model.Type,
+        session: SessionID?
     ) async throws -> Model? {
         let query = SurrealQuery<Model>(sql: "DELETE \(recordID.rawValue);")
-        return try await self.query(query).first
+        return try await self.query(query, session: session).first
     }
 
-    func kill(liveQueryID: UUID) async throws {
-        _ = try await rpc("kill", params: [.uuid(liveQueryID)])
+    func kill(liveQueryID: UUID, session: SessionID?) async throws {
+        _ = try await rpc("kill", params: [.uuid(liveQueryID)], session: session)
     }
 
-    private func rpc(_ method: String, params: [SurrealValue]? = nil) async throws -> SurrealValue {
+    private func rpc(_ method: String, params: [SurrealValue]? = nil, session: SessionID?) async throws -> SurrealValue {
+        if let activeReplay {
+            await activeReplay.value
+        }
+
+        let context = try sessionContext(for: session)
         let request = RPCRequest(
             id: UUID().uuidString,
             method: method,
             params: params,
-            session: nil,
+            session: session?.rawValue.uuidString,
             txn: nil
         )
 
-        let envelope = try await engine.send(request, session: sessionContext)
+        let envelope = try await engine.send(request, session: context)
 
         if let error = envelope.error {
             throw SurrealError.serverError(error)
@@ -276,14 +466,14 @@ actor SurrealClientCore {
 }
 
 extension SurrealClientCore {
-    func live<T: Decodable & Sendable>(_ query: LiveQuery<T>) async throws -> AsyncStream<LiveEvent<T>> {
+    func live<T: Decodable & Sendable>(_ query: LiveQuery<T>, session: SessionID?) async throws -> AsyncStream<LiveEvent<T>> {
         guard let liveEngine = engine as? any LiveRPCEngine else {
             throw SurrealError.unsupportedFeature(
                 "Live queries require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
             )
         }
 
-        let queryID = try await registerLiveQuery(query)
+        let queryID = try await registerLiveQuery(query, session: session)
         let wireStream = await liveEngine.openLiveStream(for: queryID)
 
         return AsyncStream { continuation in
@@ -306,15 +496,15 @@ extension SurrealClientCore {
             continuation.onTermination = { [queryID] _ in
                 forwardTask.cancel()
                 Task {
-                    try? await self.kill(liveQueryID: queryID)
+                    try? await self.kill(liveQueryID: queryID, session: session)
                     await liveEngine.closeLiveStream(for: queryID)
                 }
             }
         }
     }
 
-    private func registerLiveQuery<T: Decodable & Sendable>(_ query: LiveQuery<T>) async throws -> UUID {
-        let results = try await queryRaw(query.sql, bindings: query.bindings)
+    private func registerLiveQuery<T: Decodable & Sendable>(_ query: LiveQuery<T>, session: SessionID?) async throws -> UUID {
+        let results = try await queryRaw(query.sql, bindings: query.bindings, session: session)
 
         guard let first = results.first else {
             throw SurrealError.invalidResponse("Expected live query registration result.")
