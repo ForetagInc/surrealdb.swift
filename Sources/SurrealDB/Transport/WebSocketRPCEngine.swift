@@ -1,6 +1,6 @@
 import Foundation
 
-actor WebSocketRPCEngine: LiveRPCEngine {
+actor WebSocketRPCEngine: LiveRPCEngine, SessionCapableRPCEngine {
     private let endpoint: URL
     private let urlSession: URLSession
     private let clientOptions: SurrealClientOptions
@@ -13,6 +13,7 @@ actor WebSocketRPCEngine: LiveRPCEngine {
 
     private var pending: [String: CheckedContinuation<RPCResponseEnvelope, Error>] = [:]
     private var liveContinuations: [UUID: AsyncStream<LiveWireEvent>.Continuation] = [:]
+    private var reconnectContinuation: AsyncStream<Void>.Continuation?
 
     private var connected = false
     private var closedByClient = false
@@ -53,6 +54,16 @@ actor WebSocketRPCEngine: LiveRPCEngine {
 
         failPending(with: SurrealError.notConnected)
         finishAllLiveStreams()
+
+        reconnectContinuation?.finish()
+        reconnectContinuation = nil
+    }
+
+    func reconnectEvents() -> AsyncStream<Void> {
+        reconnectContinuation?.finish()
+        return AsyncStream { continuation in
+            self.reconnectContinuation = continuation
+        }
     }
 
     func send(_ request: RPCRequest, session: SessionContext) async throws -> RPCResponseEnvelope {
@@ -93,6 +104,8 @@ actor WebSocketRPCEngine: LiveRPCEngine {
     }
 
     private func establishSocket() async throws {
+        task?.cancel(with: .goingAway, reason: nil)
+
         let socket = urlSession.webSocketTask(with: endpoint, protocols: codec.websocketSubprotocols)
         task = socket
         socket.resume()
@@ -233,8 +246,13 @@ actor WebSocketRPCEngine: LiveRPCEngine {
             let sleepNanos = UInt64(max(delaySeconds, 0.1) * 1_000_000_000)
             try? await Task.sleep(nanoseconds: sleepNanos)
 
+            guard !closedByClient else {
+                return
+            }
+
             do {
                 try await establishSocket()
+                reconnectContinuation?.yield(())
                 return
             } catch {
                 continue

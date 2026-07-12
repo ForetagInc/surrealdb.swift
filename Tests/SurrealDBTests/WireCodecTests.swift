@@ -44,6 +44,45 @@ func jsonWireCodec_roundTripsRequestAndEnvelope() throws {
 }
 
 @Test
+func jsonWireCodec_encodesSessionAndTxnFieldsWhenPresent() throws {
+    let codec = JSONWireCodec()
+    let sessionID = UUID().uuidString
+    let txnID = UUID().uuidString
+
+    let request = RPCRequest(
+        id: "1",
+        method: "query",
+        params: [.string("SELECT 1;"), .object([:])],
+        session: sessionID,
+        txn: txnID
+    )
+
+    let encoded = try codec.encode(request)
+    let payload = String(data: encoded, encoding: .utf8) ?? ""
+
+    #expect(payload.contains("\"session\":\"\(sessionID)\""))
+    #expect(payload.contains("\"txn\":\"\(txnID)\""))
+}
+
+@Test
+func jsonWireCodec_omitsSessionAndTxnFieldsWhenNil() throws {
+    let codec = JSONWireCodec()
+    let request = RPCRequest(
+        id: "1",
+        method: "query",
+        params: [.string("SELECT 1;"), .object([:])],
+        session: nil,
+        txn: nil
+    )
+
+    let encoded = try codec.encode(request)
+    let payload = String(data: encoded, encoding: .utf8) ?? ""
+
+    #expect(!payload.contains("\"session\""))
+    #expect(!payload.contains("\"txn\""))
+}
+
+@Test
 func jsonWireCodec_decodesErrorEnvelope() throws {
     let codec = JSONWireCodec()
     let responseJSON = """

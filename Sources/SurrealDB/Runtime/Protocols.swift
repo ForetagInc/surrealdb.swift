@@ -1,15 +1,17 @@
 import Foundation
 
 public protocol SurrealQueryable: Sendable {
-    func connect() async throws
-    func close() async
-
     func use(namespace: String?, database: String?) async throws
 
     func signin(_ credentials: SignInCredentials) async throws -> AuthTokens
     func signup(_ credentials: SignUpCredentials) async throws -> AuthTokens
     func authenticate(_ token: String) async throws
     func invalidate() async throws
+
+    /// Binds a variable that is merged into every subsequent query's bindings.
+    func set(_ name: String, value: SurrealValue) async throws
+    /// Removes a previously bound variable.
+    func unset(_ name: String) async throws
 
     func query<T: Decodable & Sendable>(_ query: SurrealQuery<T>) async throws -> [T]
     func queryRaw(_ sql: String, bindings: [String: SurrealValue]) async throws -> [RPCQueryResult]

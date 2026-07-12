@@ -5,6 +5,8 @@ enum JSONRPCCodec {
         let id: String
         let method: String
         let params: [SurrealValue]?
+        let session: String?
+        let txn: String?
     }
 
     private struct WireResponse: Decodable {
@@ -15,7 +17,13 @@ enum JSONRPCCodec {
     }
 
     static func encode(_ request: RPCRequest) throws -> Data {
-        let wire = WireRequest(id: request.id, method: request.method, params: request.params)
+        let wire = WireRequest(
+            id: request.id,
+            method: request.method,
+            params: request.params,
+            session: request.session,
+            txn: request.txn
+        )
         return try JSONEncoder.surrealDefault.encode(wire)
     }
 

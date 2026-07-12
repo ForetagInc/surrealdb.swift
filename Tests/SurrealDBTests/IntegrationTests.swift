@@ -330,3 +330,48 @@ func integration_wsLiveQueries() async throws {
         Issue.record("Missing UPDATE live event.")
     }
 }
+
+@Test
+func integration_sessionForkIsolationAndClose() async throws {
+    guard IntegrationEnv.enabled else { return }
+
+    let client = try SurrealClient(endpoint: wsEndpoint())
+    try await client.connect()
+    defer { Task { await client.close() } }
+
+    try await authenticateIfNeeded(client)
+    try await client.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
+
+    let base = try await client.newSession()
+    try await base.use(namespace: IntegrationEnv.namespace, database: IntegrationEnv.database)
+    try await authenticateIfNeeded(base)
+    try await base.set("marker", value: .string("base"))
+
+    let forked = try await base.forkSession()
+    defer { Task { try? await forked.closeSession() } }
+
+    // forkSession() inherits namespace/database/variables from the source session.
+    let inherited = try await forked.query(SurrealQuery<String>(sql: "RETURN $marker;"))
+    #expect(inherited.first == "base")
+
+    // Diverging each session's variables after the fork must not cross-contaminate.
+    try await base.set("marker", value: .string("base-updated"))
+    try await forked.set("marker", value: .string("forked-updated"))
+
+    let baseMarker = try await base.query(SurrealQuery<String>(sql: "RETURN $marker;"))
+    let forkedMarker = try await forked.query(SurrealQuery<String>(sql: "RETURN $marker;"))
+    #expect(baseMarker.first == "base-updated")
+    #expect(forkedMarker.first == "forked-updated")
+
+    // The connection reports both attached (non-root) sessions.
+    let attached = try await client.sessions()
+    #expect(attached.contains(base.id))
+    #expect(attached.contains(forked.id))
+
+    // closeSession() invalidates the session going forward.
+    try await forked.closeSession()
+    let stillValid = await forked.isValid
+    #expect(!stillValid)
+
+    try await base.closeSession()
+}

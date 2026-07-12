@@ -19,6 +19,7 @@ iOS 17+ · macOS 14+ · tvOS 17+ · watchOS 10+ · visionOS 1+
 - Pluggable wire protocols (CBOR, JSON) — opt into either per-client
 - Type-safe CRUD via `@SurrealModel` macro and query DSL
 - Live queries over WebSocket via `AsyncStream`
+- Multi-session: fork independent namespace/database/auth/variable contexts over one WebSocket connection
 - Client-side transactions with automatic binding-collision rewriting
 - Raw SQL queries with bound parameters
 - Root, namespace, database, and record-access authentication
@@ -249,11 +250,76 @@ let client = try SurrealClient(
 )
 ```
 
+`SessionContext` here is a static, local snapshot passed at `init` to resume a login — it has no identity on the server. Don't confuse it with `SurrealSession` (below), a live, forkable, server-tracked session identified by a `SessionID`.
+
 ### Invalidating a session
 
 ```swift
 try await client.invalidate()
 ```
+
+---
+
+## Sessions
+
+A `SurrealClient` is always scoped to its connection's default session (`client.id == nil`). On a WebSocket endpoint, you can multiplex additional, fully independent sessions — each with its own namespace, database, authentication, and bound variables — over that same connection via `SurrealSession`. This is unavailable over HTTP: `newSession()`/`forkSession()`/`sessions()` throw `SurrealError.unsupportedFeature` on HTTP clients, since there's no persistent connection for the server to attach a session to.
+
+### Creating a session
+
+```swift
+// Blank — nothing inherited from the client's default session
+let session = try await client.newSession()
+try await session.use(namespace: "myapp", database: "mydb")
+try await session.signin(.root(username: "root", password: "root"))
+```
+
+### Forking a session
+
+```swift
+// Clones the source session's namespace, database, authentication, and
+// variables into a brand new, independent session
+let forked = try await session.forkSession()
+```
+
+### Binding variables
+
+```swift
+try await session.set("minAge", value: .int(18))
+let adults = try await session.queryRaw("SELECT * FROM person WHERE age >= $minAge;")
+try await session.unset("minAge")
+```
+
+`set`/`unset` are also available on `SurrealClient` itself, scoped to the default session.
+
+Variables are merged into each query's bindings client-side — they are not server-side `LET` parameters. Contexts the server evaluates on its own (for example live-query permission clauses referencing `$minAge`) won't see them. This differs from the JavaScript SDK, whose `set`/`unset` issue server-side RPCs.
+
+### Closing a session
+
+```swift
+try await session.closeSession()
+let isValid = await session.isValid // false
+
+// Or, to always close even if the closure throws:
+let result = try await client.newSession().withSession { session in
+    try await session.use(namespace: "myapp", database: "mydb")
+    return try await session.queryRaw("RETURN 1;")
+}
+```
+
+### Listing and re-attaching sessions
+
+```swift
+let ids = try await client.sessions()          // session ids attached to this connection
+let handle = client.session(id: ids[0])         // re-attach a handle without re-validating it
+```
+
+Session state is tracked per client instance: `session(id:)` only works for ids this client created (sessions are scoped to their connection, so an id from another client can't exist here anyway). A handle around a closed or foreign id throws `SurrealError.invalidSession` on use, and its `isValid` reports `false`.
+
+### Reconnection behaviour
+
+When the WebSocket reconnects after a drop, the client automatically re-attaches every session and replays its namespace/database selection and authentication. Bound variables live client-side, so they survive reconnects without any replay. Live queries are **not** re-registered — their streams finish when the connection drops and must be re-opened by the caller.
+
+`SurrealSession` conforms to the same `SurrealQueryable`/`SurrealLiveQueryable` protocols as `SurrealClient`, so every query, CRUD, and live-query method shown elsewhere in this README works identically on a session.
 
 ---
 
