@@ -1,0 +1,23 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.0.0]
+### Added
+- Initial SurrealDB Swift client: core query builder, table/field modeller, transport protocol abstraction (HTTP/WebSocket), CBOR codec, and integration test harness.
+- Engine and codec abstraction, plus the Spectron SDK.
+- Typed `ServerErrorKind` enum taxonomy mirroring the server's `{code, message, kind, details, cause}` wire shape, with convenience booleans (`isTokenExpired`, `isInvalidAuth`, `isTransactionConflict`, `isNotFound`, `isAlreadyExists`, etc.) (#5).
+- Multi-session support: one WebSocket connection can now multiplex multiple independent sessions (namespace/database/auth/bound variables), via `newSession()`/`forkSession()`/`closeSession()`/`sessions()`, mirroring `surrealdb.js`'s multi-session model. WebSocket only — HTTP throws `SurrealError.unsupportedFeature` (#6).
+- `set()`/`unset()` on `SurrealQueryable` for client-side session-scoped bound variables (#6).
+- Reconnect-replay mechanism restoring a session's namespace/database/auth after a WebSocket reconnect, fixing a pre-existing bug where that state was silently dropped (#6).
+
+### Fixed
+- `QueryErrorDetail` was silently dropping `kind` for per-statement query failures; it now carries `kind` and exposes `.typedKind` (#5).
+- JSON wire codec was silently dropping the `session`/`txn` fields the CBOR codec already carried (#6).
+
+[Unreleased]: https://github.com/surrealdb/surrealdb.swift/compare/v1.0.0...HEAD
