@@ -51,10 +51,10 @@ extension URLSession: HTTPClient {
 }
 #endif
 
-public actor SpectronTransport {
+public actor AgentMemoryTransport {
     public static let defaultTimeout: TimeInterval = 30
     public static let defaultMaxRetries: Int = 3
-    public static let userAgent = "surrealdb-swift-spectron/1.0"
+    public static let userAgent = "surrealdb-swift-memory/1.0"
 
     public let endpoint: String
     public let apiKey: String
@@ -67,16 +67,16 @@ public actor SpectronTransport {
     public init(
         endpoint: String,
         apiKey: String,
-        timeout: TimeInterval = SpectronTransport.defaultTimeout,
-        maxRetries: Int = SpectronTransport.defaultMaxRetries,
+        timeout: TimeInterval = AgentMemoryTransport.defaultTimeout,
+        maxRetries: Int = AgentMemoryTransport.defaultMaxRetries,
         client: (any HTTPClient)? = nil,
         sleeper: (@Sendable (TimeInterval) async -> Void)? = nil
     ) throws {
         guard !endpoint.isEmpty else {
-            throw SpectronError(kind: .base, status: 0, title: "Spectron endpoint is required.")
+            throw AgentMemoryError(kind: .base, status: 0, title: "Agent Memory endpoint is required.")
         }
         guard !apiKey.isEmpty else {
-            throw SpectronError(kind: .base, status: 0, title: "Spectron API key is required.")
+            throw AgentMemoryError(kind: .base, status: 0, title: "Agent Memory API key is required.")
         }
         var ep = endpoint
         while ep.hasSuffix("/") { ep.removeLast() }
@@ -117,13 +117,13 @@ public actor SpectronTransport {
             urlString = endpoint + suffix
         }
         guard var components = URLComponents(string: urlString) else {
-            throw SpectronError(kind: .base, status: 0, title: "Invalid URL", detail: urlString)
+            throw AgentMemoryError(kind: .base, status: 0, title: "Invalid URL", detail: urlString)
         }
         if let query = query, !query.isEmpty {
             components.queryItems = query
         }
         guard let url = components.url else {
-            throw SpectronError(kind: .base, status: 0, title: "Invalid URL", detail: urlString)
+            throw AgentMemoryError(kind: .base, status: 0, title: "Invalid URL", detail: urlString)
         }
         return url
     }
@@ -132,7 +132,7 @@ public actor SpectronTransport {
         var headers: [String: String] = [
             "Authorization": "Bearer \(apiKey)",
             "Accept": "application/json",
-            "User-Agent": SpectronTransport.userAgent
+            "User-Agent": AgentMemoryTransport.userAgent
         ]
         if let contentType { headers["Content-Type"] = contentType }
         if let extra {
@@ -191,11 +191,11 @@ public actor SpectronTransport {
                     attempt += 1
                     continue
                 }
-                throw SpectronErrorFactory.connectionFailed(error)
+                throw AgentMemoryErrorFactory.connectionFailed(error)
             }
 
             guard let http = response as? HTTPURLResponse else {
-                throw SpectronError(kind: .base, status: 0, title: "Invalid response", detail: "Expected HTTPURLResponse")
+                throw AgentMemoryError(kind: .base, status: 0, title: "Invalid response", detail: "Expected HTTPURLResponse")
             }
             let status = http.statusCode
 
@@ -213,7 +213,7 @@ public actor SpectronTransport {
                         headerDict[ks] = vs
                     }
                 }
-                throw SpectronErrorFactory.fromResponse(status: status, body: body, headers: headerDict)
+                throw AgentMemoryErrorFactory.fromResponse(status: status, body: body, headers: headerDict)
             }
 
             if status == 204 || data.isEmpty {
@@ -292,11 +292,11 @@ public actor SpectronTransport {
         do {
             (lineStream, response) = try await client.lines(for: req)
         } catch {
-            throw SpectronErrorFactory.connectionFailed(error)
+            throw AgentMemoryErrorFactory.connectionFailed(error)
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw SpectronError(kind: .base, status: 0, title: "Invalid response", detail: "Expected HTTPURLResponse")
+            throw AgentMemoryError(kind: .base, status: 0, title: "Invalid response", detail: "Expected HTTPURLResponse")
         }
 
         if http.statusCode >= 400 {
@@ -307,7 +307,7 @@ public actor SpectronTransport {
                 if let ks = k as? String, let vs = v as? String { headerDict[ks] = vs }
             }
             let body = decodeJSON(Data(collected.utf8))
-            throw SpectronErrorFactory.fromResponse(status: http.statusCode, body: body, headers: headerDict)
+            throw AgentMemoryErrorFactory.fromResponse(status: http.statusCode, body: body, headers: headerDict)
         }
 
         return AsyncThrowingStream<ChatChunk, any Error> { continuation in
@@ -351,7 +351,7 @@ public actor SpectronTransport {
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            throw SpectronError(
+            throw AgentMemoryError(
                 kind: .base,
                 status: 0,
                 title: "Failed to decode response",
@@ -379,7 +379,7 @@ public struct MultipartForm: Sendable {
     public let boundary: String
     public private(set) var body: Data
 
-    public init(boundary: String = "spectron-\(UUID().uuidString)") {
+    public init(boundary: String = "agent-memory-\(UUID().uuidString)") {
         self.boundary = boundary
         self.body = Data()
     }
@@ -430,7 +430,7 @@ public struct MultipartForm: Sendable {
 
 // MARK: - File payload
 
-public enum SpectronFile: Sendable {
+public enum AgentMemoryFile: Sendable {
     case data(Data, filename: String?, mimeType: String?)
     case fileURL(URL, filename: String?, mimeType: String?)
 

@@ -6,11 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Renamed the Spectron client to Agent Memory: the library product and module `Spectron` is now `AgentMemory`, and the types it exports lose the `Spectron` prefix (`Spectron` → `AgentMemory`, `SpectronError` → `AgentMemoryError`, `SpectronTransport` → `AgentMemoryTransport`, and so on). Source-breaking for anyone on `v1.0.0-alpha.1`.
 
 ## [1.0.0]
 ### Added
 - Initial SurrealDB Swift client: core query builder, table/field modeller, transport protocol abstraction (HTTP/WebSocket), CBOR codec, and integration test harness.
-- Engine and codec abstraction, plus the Spectron SDK.
+- Engine and codec abstraction, plus the Agent Memory SDK.
 - Typed `ServerErrorKind` enum taxonomy mirroring the server's `{code, message, kind, details, cause}` wire shape, with convenience booleans (`isTokenExpired`, `isInvalidAuth`, `isTransactionConflict`, `isNotFound`, `isAlreadyExists`, etc.) (#5).
 - Multi-session support: one WebSocket connection can now multiplex multiple independent sessions (namespace/database/auth/bound variables), via `newSession()`/`forkSession()`/`closeSession()`/`sessions()`, mirroring `surrealdb.js`'s multi-session model. WebSocket only — HTTP throws `SurrealError.unsupportedFeature` (#6).
 - `set()`/`unset()` on `SurrealQueryable` for client-side session-scoped bound variables (#6).

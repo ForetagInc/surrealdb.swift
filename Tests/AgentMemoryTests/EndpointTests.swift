@@ -1,20 +1,20 @@
 import Foundation
 import XCTest
-@testable import Spectron
+@testable import AgentMemory
 
 final class EndpointTests: XCTestCase {
-    let base = "https://api.spectron.test"
+    let base = "https://api.memory.test"
     let apiKey = "test-key"
     let ctx = "acme-prod"
 
-    private func makeClient(_ http: MockHTTPClient) throws -> Spectron {
-        let transport = try SpectronTransport(
+    private func makeClient(_ http: MockHTTPClient) throws -> AgentMemory {
+        let transport = try AgentMemoryTransport(
             endpoint: base,
             apiKey: apiKey,
             client: http,
             sleeper: { _ in }
         )
-        return Spectron(context: ctx, transport: transport)
+        return AgentMemory(context: ctx, transport: transport)
     }
 
     private func body(_ http: MockHTTPClient) throws -> [String: Any] {

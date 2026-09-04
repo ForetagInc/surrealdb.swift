@@ -2,7 +2,7 @@ import Foundation
 
 enum Paths {
     static func endUserBase(_ contextId: String) -> String {
-        "/api/v1/\(SpectronTransport.quotePath(contextId))"
+        "/api/v1/\(AgentMemoryTransport.quotePath(contextId))"
     }
 }
 

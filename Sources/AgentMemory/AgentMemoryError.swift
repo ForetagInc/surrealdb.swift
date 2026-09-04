@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SpectronError: Error, Sendable, Equatable {
+public struct AgentMemoryError: Error, Sendable, Equatable {
     public enum Kind: Sendable, Equatable {
         case base
         case auth
@@ -48,7 +48,7 @@ public struct SpectronError: Error, Sendable, Equatable {
     public var isServer: Bool { kind == .server }
 }
 
-extension SpectronError: LocalizedError {
+extension AgentMemoryError: LocalizedError {
     public var errorDescription: String? {
         if let detail = detail, !detail.isEmpty {
             return "[\(status)] \(title): \(detail)"
@@ -57,9 +57,9 @@ extension SpectronError: LocalizedError {
     }
 }
 
-enum SpectronErrorFactory {
-    static func fromResponse(status: Int, body: JSONValue?, headers: [String: String]) -> SpectronError {
-        var title = "Spectron request failed"
+enum AgentMemoryErrorFactory {
+    static func fromResponse(status: Int, body: JSONValue?, headers: [String: String]) -> AgentMemoryError {
+        var title = "Agent Memory request failed"
         var detail: String? = nil
         var typeURI: String? = nil
         var instance: String? = nil
@@ -80,7 +80,7 @@ enum SpectronErrorFactory {
             detail = s
         }
 
-        let kind: SpectronError.Kind = {
+        let kind: AgentMemoryError.Kind = {
             if status >= 500 { return .server }
             switch status {
             case 400, 422: return .validation
@@ -100,7 +100,7 @@ enum SpectronErrorFactory {
             }
         }
 
-        return SpectronError(
+        return AgentMemoryError(
             kind: kind,
             status: status,
             title: title,
@@ -112,8 +112,8 @@ enum SpectronErrorFactory {
         )
     }
 
-    static func connectionFailed(_ underlying: any Error) -> SpectronError {
-        SpectronError(
+    static func connectionFailed(_ underlying: any Error) -> AgentMemoryError {
+        AgentMemoryError(
             kind: .base,
             status: 0,
             title: "Connection failed",

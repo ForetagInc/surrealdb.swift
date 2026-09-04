@@ -631,20 +631,20 @@ SessionContext(
 
 ---
 
-## Spectron
+## Agent Memory
 
-The package also ships a `Spectron` library product, a client for [Spectron](https://surrealdb.com/platform/spectron), SurrealDB's memory and knowledge API. Add it to your target alongside `SurrealDB` (or on its own):
+The package also ships an `AgentMemory` library product, a client for [Agent Memory](https://surrealdb.com/agent-memory), SurrealDB's memory and knowledge API. Add it to your target alongside `SurrealDB` (or on its own):
 
 ```swift
-.product(name: "Spectron", package: "surrealdb.swift")
+.product(name: "AgentMemory", package: "surrealdb.swift")
 ```
 
 ```swift
-import Spectron
+import AgentMemory
 
-let memory = try Spectron(
+let memory = try AgentMemory(
     context: "acme-prod",
-    endpoint: "https://api.spectron.example",
+    endpoint: "https://api.memory.example",
     apiKey: "sk-spec-..."
 )
 
@@ -653,7 +653,7 @@ _ = try await memory.remember("Tobie was promoted to CTO", role: .user)
 let hits = try await memory.recall("what is Tobie's role?", k: 5)
 ```
 
-The client is `Sendable` and built on Swift `async/await`. The underlying `SpectronTransport` is an actor backed by `URLSession`, and you can swap in your own `HTTPClient` for testing.
+The client is `Sendable` and built on Swift `async/await`. The underlying `AgentMemoryTransport` is an actor backed by `URLSession`, and you can swap in your own `HTTPClient` for testing.
 
 The surface is grouped into `documents` (Layer 0 knowledge), `memory` (retrieval, sessions, entities, facts, lifecycle, traces), and governance (`scopes`, `principals`, `keys`). The most common operations are also exposed directly on the client as `remember`, `recall`, `rememberMany`, `forget`, and `chat`.
 
@@ -661,7 +661,7 @@ Every method accepts an optional `onBehalfOf:` argument that performs the reques
 
 ### Documents
 
-Documents are uploaded as multipart form data. Optional metadata (`title`, `source`) is sent as a JSON part ahead of the file; the file's MIME type is inferred from the `SpectronFile` you supply.
+Documents are uploaded as multipart form data. Optional metadata (`title`, `source`) is sent as a JSON part ahead of the file; the file's MIME type is inferred from the `AgentMemoryFile` you supply.
 
 ```swift
 let doc = try await memory.documents.upload(
@@ -748,7 +748,7 @@ _ = try await memory.rememberMany(
 )
 ```
 
-Or let Spectron run the managed chat loop, which retrieves context, replies, and persists the exchange in one call:
+Or let AgentMemory run the managed chat loop, which retrieves context, replies, and persists the exchange in one call:
 
 ```swift
 let reply = try await session.chat("What do you know about me?")
@@ -852,14 +852,14 @@ _ = try await memory.health()
 
 ### Errors
 
-All failures throw `SpectronError`, a single struct carrying `status`, `title`, `detail`, and `retryAfter` (plus `typeURI`, `instance`, and `extensions` for forward compatibility). The end-user API returns errors as `{ "message": "..." }`, which is surfaced as `title`. The `kind` field maps the HTTP status to one of `.base`, `.auth`, `.scope`, `.notFound`, `.validation`, `.rateLimit`, or `.server`.
+All failures throw `AgentMemoryError`, a single struct carrying `status`, `title`, `detail`, and `retryAfter` (plus `typeURI`, `instance`, and `extensions` for forward compatibility). The end-user API returns errors as `{ "message": "..." }`, which is surfaced as `title`. The `kind` field maps the HTTP status to one of `.base`, `.auth`, `.scope`, `.notFound`, `.validation`, `.rateLimit`, or `.server`.
 
 ```swift
 do {
     _ = try await memory.documents.get("doc:missing")
-} catch let error as SpectronError where error.isNotFound {
+} catch let error as AgentMemoryError where error.isNotFound {
     print(error.status, error.title)
-} catch let error as SpectronError where error.isRateLimit {
+} catch let error as AgentMemoryError where error.isRateLimit {
     print("retry after", error.retryAfter ?? 0, "seconds")
 }
 ```
@@ -875,7 +875,7 @@ do {
 
 ### Retries, timeouts, scope
 
-`GET` requests retry on connection errors and 5xx responses with backoff 250ms, 500ms, 1s (up to `maxRetries`, default 3). Writes are not retried, except `remember` / `rememberMany`, which carry an `Idempotency-Key` and so are retried safely. Default request timeout is 30 seconds, overridable on the `Spectron` initialiser.
+`GET` requests retry on connection errors and 5xx responses with backoff 250ms, 500ms, 1s (up to `maxRetries`, default 3). Writes are not retried, except `remember` / `rememberMany`, which carry an `Idempotency-Key` and so are retried safely. Default request timeout is 30 seconds, overridable on the `AgentMemory` initialiser.
 
 Scope identifies the memory region a write targets. On requests that accept it (`remember`, `rememberMany`, `chat`, `sessions.create`, `documents.upload`), the `scope:` argument is a `Scope` value in disjunctive normal form: an OR of AND-clauses. A bare string is a single-path clause, a flat list is an OR of clauses, and a nested array is a single AND-clause, so the forms mix freely. All forms normalise to an ordered, de-duplicated list of clauses with empty paths and empty clauses dropped; omitting it uses the key's default write region. Note that a flat list of two or more paths means OR, not AND. To require several paths together, nest them in one clause.
 
@@ -892,13 +892,13 @@ Reads narrow with the same type: pass `lens:` to `recall` (and `memory.query` / 
 
 ### Custom transport for testing
 
-`SpectronTransport` accepts any `HTTPClient`, so unit tests can replay canned responses without hitting the network:
+`AgentMemoryTransport` accepts any `HTTPClient`, so unit tests can replay canned responses without hitting the network:
 
 ```swift
 let mock = MyMockHTTPClient()
 mock.enqueue(.json(["ok": true]))
-let transport = try SpectronTransport(endpoint: "https://example", apiKey: "k", client: mock, sleeper: { _ in })
-let client = Spectron(context: "ctx", transport: transport)
+let transport = try AgentMemoryTransport(endpoint: "https://example", apiKey: "k", client: mock, sleeper: { _ in })
+let client = AgentMemory(context: "ctx", transport: transport)
 ```
 
 ---

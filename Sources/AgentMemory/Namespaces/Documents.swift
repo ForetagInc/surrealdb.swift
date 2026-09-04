@@ -1,13 +1,13 @@
 import Foundation
 
 public struct DocumentsNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let contextId: String
     let base: String
 
     public let keywords: KeywordsNamespace
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.contextId = contextId
         self.base = "\(Paths.endUserBase(contextId))/documents"
@@ -18,7 +18,7 @@ public struct DocumentsNamespace: Sendable {
 
     @discardableResult
     public func upload(
-        file: SpectronFile,
+        file: AgentMemoryFile,
         title: String? = nil,
         source: String? = nil,
         scope: Scope? = nil,
@@ -43,7 +43,7 @@ public struct DocumentsNamespace: Sendable {
     @discardableResult
     public func replace(
         documentId: String,
-        file: SpectronFile,
+        file: AgentMemoryFile,
         title: String? = nil,
         source: String? = nil,
         scope: Scope? = nil,
@@ -55,7 +55,7 @@ public struct DocumentsNamespace: Sendable {
         try appendMetadata(metadata, to: &form)
         form.appendFile("file", filename: filename, mimeType: mime, data: data)
         let body = form.finalize()
-        let path = "\(base)/\(SpectronTransport.quotePath(documentId))"
+        let path = "\(base)/\(AgentMemoryTransport.quotePath(documentId))"
         let (respData, _) = try await transport.uploadMultipart(
             path,
             method: "PUT",
@@ -85,7 +85,7 @@ public struct DocumentsNamespace: Sendable {
 
     public func get(_ documentId: String, onBehalfOf: String? = nil) async throws -> Document {
         try await transport.get(
-            "\(base)/\(SpectronTransport.quotePath(documentId))",
+            "\(base)/\(AgentMemoryTransport.quotePath(documentId))",
             extraHeaders: delegationHeaders(onBehalfOf),
             as: Document.self
         )
@@ -93,7 +93,7 @@ public struct DocumentsNamespace: Sendable {
 
     public func raw(_ documentId: String, onBehalfOf: String? = nil) async throws -> Data {
         try await transport.rawBytes(
-            "\(base)/\(SpectronTransport.quotePath(documentId))/raw",
+            "\(base)/\(AgentMemoryTransport.quotePath(documentId))/raw",
             extraHeaders: delegationHeaders(onBehalfOf)
         )
     }
@@ -101,7 +101,7 @@ public struct DocumentsNamespace: Sendable {
     public func chunks(_ documentId: String, page: Int? = nil, pageSize: Int? = nil, onBehalfOf: String? = nil) async throws -> ChunkPage {
         let q = QueryItems.from([("page", page), ("page_size", pageSize)])
         return try await transport.get(
-            "\(base)/\(SpectronTransport.quotePath(documentId))/chunks",
+            "\(base)/\(AgentMemoryTransport.quotePath(documentId))/chunks",
             query: q,
             extraHeaders: delegationHeaders(onBehalfOf),
             as: ChunkPage.self
@@ -109,7 +109,7 @@ public struct DocumentsNamespace: Sendable {
     }
 
     public func keywordsFor(_ documentId: String, onBehalfOf: String? = nil) async throws -> [DocumentKeyword] {
-        let path = "\(base)/\(SpectronTransport.quotePath(documentId))/keywords"
+        let path = "\(base)/\(AgentMemoryTransport.quotePath(documentId))/keywords"
         let resp = try await transport.get(path, extraHeaders: delegationHeaders(onBehalfOf), as: DocumentKeywordsResponse.self)
         return resp.keywords
     }
@@ -132,7 +132,7 @@ public struct DocumentsNamespace: Sendable {
 
     public func delete(_ documentId: String, onBehalfOf: String? = nil) async throws {
         try await transport.delete(
-            "\(base)/\(SpectronTransport.quotePath(documentId))",
+            "\(base)/\(AgentMemoryTransport.quotePath(documentId))",
             extraHeaders: delegationHeaders(onBehalfOf)
         )
     }
@@ -197,10 +197,10 @@ public struct DocumentsNamespace: Sendable {
 // MARK: - Keywords
 
 public struct KeywordsNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/documents/keywords"
     }
@@ -239,7 +239,7 @@ public struct KeywordsNamespace: Sendable {
 
     public func get(_ normalised: String, onBehalfOf: String? = nil) async throws -> KeywordDetail {
         try await transport.get(
-            "\(base)/\(SpectronTransport.quotePath(normalised))",
+            "\(base)/\(AgentMemoryTransport.quotePath(normalised))",
             extraHeaders: delegationHeaders(onBehalfOf),
             as: KeywordDetail.self
         )

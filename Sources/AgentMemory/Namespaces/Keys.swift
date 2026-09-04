@@ -2,10 +2,10 @@ import Foundation
 
 /// Self-service API keys scoped to the context.
 public struct KeysNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/keys"
     }
@@ -40,7 +40,7 @@ public struct KeysNamespace: Sendable {
 
     public func delete(_ keyName: String, onBehalfOf: String? = nil) async throws {
         try await transport.delete(
-            "\(base)/\(SpectronTransport.quotePath(keyName))",
+            "\(base)/\(AgentMemoryTransport.quotePath(keyName))",
             extraHeaders: delegationHeaders(onBehalfOf)
         )
     }
@@ -48,7 +48,7 @@ public struct KeysNamespace: Sendable {
     @discardableResult
     public func rotate(_ keyName: String, ttlSeconds: Int? = nil, onBehalfOf: String? = nil) async throws -> MintedKey {
         let query = QueryItems.from([("ttlSeconds", ttlSeconds)])
-        let path = "\(base)/\(SpectronTransport.quotePath(keyName))/rotate"
+        let path = "\(base)/\(AgentMemoryTransport.quotePath(keyName))/rotate"
         let (respData, _) = try await transport.request(
             method: "POST",
             path: path,
