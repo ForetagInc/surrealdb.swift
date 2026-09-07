@@ -1,13 +1,13 @@
 import Foundation
 import XCTest
-@testable import Spectron
+@testable import AgentMemory
 
 final class TransportTests: XCTestCase {
-    let base = "https://api.spectron.test"
+    let base = "https://api.memory.test"
     let apiKey = "test-key"
 
-    private func makeTransport(client: MockHTTPClient, maxRetries: Int = 3) throws -> SpectronTransport {
-        try SpectronTransport(
+    private func makeTransport(client: MockHTTPClient, maxRetries: Int = 3) throws -> AgentMemoryTransport {
+        try AgentMemoryTransport(
             endpoint: base,
             apiKey: apiKey,
             timeout: 5,
@@ -48,8 +48,8 @@ final class TransportTests: XCTestCase {
         let t = try makeTransport(client: client)
         do {
             _ = try await t.request(method: "GET", path: "/api/v1/x/y")
-            XCTFail("Expected SpectronError")
-        } catch let err as SpectronError {
+            XCTFail("Expected AgentMemoryError")
+        } catch let err as AgentMemoryError {
             XCTAssertEqual(err.kind, .server)
             XCTAssertEqual(err.status, 500)
         }
@@ -63,8 +63,8 @@ final class TransportTests: XCTestCase {
         let body = try JSONEncoder().encode(["hello": "world"])
         do {
             _ = try await t.request(method: "POST", path: "/api/v1/x/z", jsonBody: body)
-            XCTFail("Expected SpectronError")
-        } catch let err as SpectronError {
+            XCTFail("Expected AgentMemoryError")
+        } catch let err as AgentMemoryError {
             XCTAssertEqual(err.kind, .server)
         }
         XCTAssertEqual(client.callCount, 1)
@@ -76,8 +76,8 @@ final class TransportTests: XCTestCase {
         let t = try makeTransport(client: client)
         do {
             _ = try await t.request(method: "GET", path: "/api/v1/x/missing")
-            XCTFail("Expected SpectronError")
-        } catch let err as SpectronError {
+            XCTFail("Expected AgentMemoryError")
+        } catch let err as AgentMemoryError {
             XCTAssertEqual(err.kind, .notFound)
             XCTAssertEqual(err.detail, "no such doc")
         }
@@ -89,8 +89,8 @@ final class TransportTests: XCTestCase {
         let t = try makeTransport(client: client)
         do {
             _ = try await t.request(method: "GET", path: "/api/v1/x/secure")
-            XCTFail("Expected SpectronError")
-        } catch let err as SpectronError {
+            XCTFail("Expected AgentMemoryError")
+        } catch let err as AgentMemoryError {
             XCTAssertEqual(err.kind, .auth)
         }
     }
@@ -102,8 +102,8 @@ final class TransportTests: XCTestCase {
         do {
             let body = try JSONEncoder().encode([String: String]())
             _ = try await t.request(method: "POST", path: "/api/v1/x/burst", jsonBody: body)
-            XCTFail("Expected SpectronError")
-        } catch let err as SpectronError {
+            XCTFail("Expected AgentMemoryError")
+        } catch let err as AgentMemoryError {
             XCTAssertEqual(err.kind, .rateLimit)
             XCTAssertEqual(err.retryAfter, 7.0)
         }
@@ -133,7 +133,7 @@ final class TransportTests: XCTestCase {
     func testEndpointTrimsTrailingSlash() async throws {
         let client = MockHTTPClient()
         client.enqueue(.json(["ok": true]))
-        let t = try SpectronTransport(
+        let t = try AgentMemoryTransport(
             endpoint: "\(base)/",
             apiKey: apiKey,
             client: client,
@@ -144,10 +144,10 @@ final class TransportTests: XCTestCase {
     }
 
     func testAPIKeyRequired() {
-        XCTAssertThrowsError(try SpectronTransport(endpoint: base, apiKey: ""))
+        XCTAssertThrowsError(try AgentMemoryTransport(endpoint: base, apiKey: ""))
     }
 
     func testEndpointRequired() {
-        XCTAssertThrowsError(try SpectronTransport(endpoint: "", apiKey: apiKey))
+        XCTAssertThrowsError(try AgentMemoryTransport(endpoint: "", apiKey: apiKey))
     }
 }

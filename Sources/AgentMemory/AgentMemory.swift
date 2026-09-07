@@ -1,8 +1,8 @@
 import Foundation
 
-public struct Spectron: Sendable {
+public struct AgentMemory: Sendable {
     public let contextId: String
-    public let transport: SpectronTransport
+    public let transport: AgentMemoryTransport
     public let documents: DocumentsNamespace
     public let memory: MemoryNamespace
     public let scopes: ScopesNamespace
@@ -21,11 +21,11 @@ public struct Spectron: Sendable {
         context: String,
         endpoint: String,
         apiKey: String,
-        timeout: TimeInterval = SpectronTransport.defaultTimeout,
-        maxRetries: Int = SpectronTransport.defaultMaxRetries,
+        timeout: TimeInterval = AgentMemoryTransport.defaultTimeout,
+        maxRetries: Int = AgentMemoryTransport.defaultMaxRetries,
         client: (any HTTPClient)? = nil
     ) throws {
-        let transport = try SpectronTransport(
+        let transport = try AgentMemoryTransport(
             endpoint: endpoint,
             apiKey: apiKey,
             timeout: timeout,
@@ -37,7 +37,7 @@ public struct Spectron: Sendable {
 
     public init(
         context: String,
-        transport: SpectronTransport
+        transport: AgentMemoryTransport
     ) {
         self.contextId = context
         self.transport = transport
@@ -51,7 +51,7 @@ public struct Spectron: Sendable {
     // MARK: - Health and identity
 
     /// Pings the service health endpoint. Returns `true` on a 200 response and
-    /// throws a `SpectronError` otherwise. Not context-scoped.
+    /// throws a `AgentMemoryError` otherwise. Not context-scoped.
     @discardableResult
     public func health() async throws -> Bool {
         _ = try await transport.request(method: "GET", path: "/api/v1/health")

@@ -14,7 +14,7 @@ let package = Package(
     ],
     products: [
         .library(name: "SurrealDB", targets: ["SurrealDB"]),
-        .library(name: "Spectron", targets: ["Spectron"])
+        .library(name: "AgentMemory", targets: ["AgentMemory"])
     ],
     dependencies: [
         .package(url: "https://github.com/outfoxx/PotentCodables.git", from: "3.5.0"),
@@ -52,11 +52,11 @@ let package = Package(
             ]
         ),
         .target(
-            name: "Spectron"
+            name: "AgentMemory"
         ),
         .testTarget(
-            name: "SpectronTests",
-            dependencies: ["Spectron"]
+            name: "AgentMemoryTests",
+            dependencies: ["AgentMemory"]
         )
     ]
 )

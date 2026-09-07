@@ -21,7 +21,7 @@ public struct ChatChunk: Sendable, Equatable {
 }
 
 /// Incremental Server-Sent Events parser that turns a line stream into
-/// `ChatChunk` values. Mirrors the framing used by the Spectron chat endpoint:
+/// `ChatChunk` values. Mirrors the framing used by the Agent Memory chat endpoint:
 /// `event:` and `data:` fields accumulate until a blank line dispatches a frame.
 struct SSEParser {
     private var event: String?

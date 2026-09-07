@@ -1,10 +1,10 @@
 import Foundation
 import XCTest
-@testable import Spectron
+@testable import AgentMemory
 
 final class ErrorTests: XCTestCase {
     func testErrorFromResponseStatusMapping() {
-        let cases: [(Int, SpectronError.Kind)] = [
+        let cases: [(Int, AgentMemoryError.Kind)] = [
             (400, .validation),
             (401, .auth),
             (403, .scope),
@@ -22,7 +22,7 @@ final class ErrorTests: XCTestCase {
                 "type": .string("https://example"),
                 "extra": .string("ext")
             ])
-            let err = SpectronErrorFactory.fromResponse(status: status, body: body, headers: [:])
+            let err = AgentMemoryErrorFactory.fromResponse(status: status, body: body, headers: [:])
             XCTAssertEqual(err.kind, expected, "status \(status)")
             XCTAssertEqual(err.status, status)
             XCTAssertEqual(err.title, "boom")
@@ -33,7 +33,7 @@ final class ErrorTests: XCTestCase {
     }
 
     func testRateLimitPicksUpRetryAfter() {
-        let err = SpectronErrorFactory.fromResponse(
+        let err = AgentMemoryErrorFactory.fromResponse(
             status: 429,
             body: .object(["title": .string("slow down")]),
             headers: ["Retry-After": "12.5"]
@@ -43,7 +43,7 @@ final class ErrorTests: XCTestCase {
     }
 
     func testErrorFromResponseFallsBackForNonDictBodies() {
-        let err = SpectronErrorFactory.fromResponse(
+        let err = AgentMemoryErrorFactory.fromResponse(
             status: 500,
             body: .string("internal explosion"),
             headers: [:]
@@ -54,7 +54,7 @@ final class ErrorTests: XCTestCase {
 
     func testErrorReadsMessageField() {
         // The end-user API returns `ApiErrorResponse { message }`.
-        let err = SpectronErrorFactory.fromResponse(
+        let err = AgentMemoryErrorFactory.fromResponse(
             status: 404,
             body: .object(["message": .string("document not found")]),
             headers: [:]

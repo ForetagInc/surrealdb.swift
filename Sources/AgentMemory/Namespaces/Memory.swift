@@ -1,7 +1,7 @@
 import Foundation
 
 public struct MemoryNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let contextId: String
     let base: String
 
@@ -11,7 +11,7 @@ public struct MemoryNamespace: Sendable {
     public let lifecycle: LifecycleNamespace
     public let traces: TracesNamespace
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.contextId = contextId
         self.base = Paths.endUserBase(contextId)
@@ -295,17 +295,17 @@ public struct MemoryNamespace: Sendable {
 // MARK: - Sessions
 
 public struct SessionsNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let contextId: String
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.contextId = contextId
         self.base = "\(Paths.endUserBase(contextId))/sessions"
     }
 
-    public func create(scope: Scope? = nil, metadata: JSONValue? = nil, onBehalfOf: String? = nil) async throws -> SpectronSession {
+    public func create(scope: Scope? = nil, metadata: JSONValue? = nil, onBehalfOf: String? = nil) async throws -> AgentMemorySession {
         var payload: [String: JSONValue] = [:]
         if let clauses = scope?.clauses, !clauses.isEmpty {
             payload["scopes"] = scopeSetsJSON(clauses)
@@ -319,21 +319,21 @@ public struct SessionsNamespace: Sendable {
             extraHeaders: delegationHeaders(onBehalfOf)
         )
         let info = try await transport.decode(SessionInfo.self, from: respData)
-        return SpectronSession(transport: transport, contextId: contextId, info: info)
+        return AgentMemorySession(transport: transport, contextId: contextId, info: info)
     }
 }
 
-public struct SpectronSession: Sendable {
+public struct AgentMemorySession: Sendable {
     public let info: SessionInfo
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let contextId: String
     let base: String
 
-    init(transport: SpectronTransport, contextId: String, info: SessionInfo) {
+    init(transport: AgentMemoryTransport, contextId: String, info: SessionInfo) {
         self.transport = transport
         self.contextId = contextId
         self.info = info
-        self.base = "\(Paths.endUserBase(contextId))/sessions/\(SpectronTransport.quotePath(info.id))"
+        self.base = "\(Paths.endUserBase(contextId))/sessions/\(AgentMemoryTransport.quotePath(info.id))"
     }
 
     public var id: String { info.id }
@@ -391,10 +391,10 @@ public struct SpectronSession: Sendable {
 // MARK: - Facts
 
 public struct FactsNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/facts"
     }
@@ -469,7 +469,7 @@ public struct FactsNamespace: Sendable {
     /// retried write is deduplicated server-side rather than applied twice.
     private func writeHeaders(path: String, body: Data, onBehalfOf: String?) -> [String: String] {
         var headers = delegationHeaders(onBehalfOf) ?? [:]
-        headers[SpectronHeader.idempotencyKey] = Idempotency.key(method: "POST", path: path, body: body)
+        headers[AgentMemoryHeader.idempotencyKey] = Idempotency.key(method: "POST", path: path, body: body)
         return headers
     }
 }
@@ -477,10 +477,10 @@ public struct FactsNamespace: Sendable {
 // MARK: - Entities
 
 public struct EntitiesNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/entities"
     }
@@ -492,18 +492,18 @@ public struct EntitiesNamespace: Sendable {
     }
 
     public func get(type: String, name: String, onBehalfOf: String? = nil) async throws -> EntityView {
-        let path = "\(base)/\(SpectronTransport.quotePath(type))/\(SpectronTransport.quotePath(name))"
+        let path = "\(base)/\(AgentMemoryTransport.quotePath(type))/\(AgentMemoryTransport.quotePath(name))"
         return try await transport.get(path, extraHeaders: delegationHeaders(onBehalfOf), as: EntityView.self)
     }
 
     public func history(type: String, name: String, key: String, onBehalfOf: String? = nil) async throws -> [AttributeDetail] {
-        let path = "\(base)/\(SpectronTransport.quotePath(type))/\(SpectronTransport.quotePath(name))/history/\(SpectronTransport.quotePath(key))"
+        let path = "\(base)/\(AgentMemoryTransport.quotePath(type))/\(AgentMemoryTransport.quotePath(name))/history/\(AgentMemoryTransport.quotePath(key))"
         let resp = try await transport.get(path, extraHeaders: delegationHeaders(onBehalfOf), as: EntityHistoryResponse.self)
         return resp.history
     }
 
     public func delete(type: String, name: String, onBehalfOf: String? = nil) async throws {
-        let path = "\(base)/\(SpectronTransport.quotePath(type))/\(SpectronTransport.quotePath(name))"
+        let path = "\(base)/\(AgentMemoryTransport.quotePath(type))/\(AgentMemoryTransport.quotePath(name))"
         try await transport.delete(path, extraHeaders: delegationHeaders(onBehalfOf))
     }
 }
@@ -511,10 +511,10 @@ public struct EntitiesNamespace: Sendable {
 // MARK: - Lifecycle
 
 public struct LifecycleNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/lifecycle"
     }
@@ -547,10 +547,10 @@ public struct LifecycleNamespace: Sendable {
 // MARK: - Traces
 
 public struct TracesNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/traces"
     }
@@ -562,7 +562,7 @@ public struct TracesNamespace: Sendable {
     }
 
     public func get(_ traceId: String, onBehalfOf: String? = nil) async throws -> TraceRecord {
-        try await transport.get("\(base)/\(SpectronTransport.quotePath(traceId))", extraHeaders: delegationHeaders(onBehalfOf), as: TraceRecord.self)
+        try await transport.get("\(base)/\(AgentMemoryTransport.quotePath(traceId))", extraHeaders: delegationHeaders(onBehalfOf), as: TraceRecord.self)
     }
 
     public func stats(onBehalfOf: String? = nil) async throws -> TraceStats {

@@ -1,5 +1,5 @@
 import Foundation
-@testable import Spectron
+@testable import AgentMemory
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking

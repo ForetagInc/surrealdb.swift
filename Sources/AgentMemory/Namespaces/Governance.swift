@@ -3,11 +3,11 @@ import Foundation
 // MARK: - Scopes
 
 public struct ScopesNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let contextId: String
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.contextId = contextId
         self.base = "\(Paths.endUserBase(contextId))/scopes"
@@ -72,10 +72,10 @@ public struct ScopesNamespace: Sendable {
 // MARK: - Principals
 
 public struct PrincipalsNamespace: Sendable {
-    let transport: SpectronTransport
+    let transport: AgentMemoryTransport
     let base: String
 
-    init(transport: SpectronTransport, contextId: String) {
+    init(transport: AgentMemoryTransport, contextId: String) {
         self.transport = transport
         self.base = "\(Paths.endUserBase(contextId))/principals"
     }
@@ -85,12 +85,12 @@ public struct PrincipalsNamespace: Sendable {
     }
 
     public func get(_ principalId: String, onBehalfOf: String? = nil) async throws -> Principal {
-        try await transport.get("\(base)/\(SpectronTransport.quotePath(principalId))", extraHeaders: delegationHeaders(onBehalfOf), as: Principal.self)
+        try await transport.get("\(base)/\(AgentMemoryTransport.quotePath(principalId))", extraHeaders: delegationHeaders(onBehalfOf), as: Principal.self)
     }
 
     public func effective(principalId: String, path: String, asOf: String? = nil, onBehalfOf: String? = nil) async throws -> EffectiveGrants {
         let q = QueryItems.from([("path", path), ("asOf", asOf)])
-        let url = "\(base)/\(SpectronTransport.quotePath(principalId))/effective"
+        let url = "\(base)/\(AgentMemoryTransport.quotePath(principalId))/effective"
         return try await transport.get(url, query: q, extraHeaders: delegationHeaders(onBehalfOf), as: EffectiveGrants.self)
     }
 
@@ -110,7 +110,7 @@ public struct PrincipalsNamespace: Sendable {
             "verbs": .array(verbs.map { .string($0) })
         ]
         let data = try JSONValue.encodeObject(payload)
-        let url = "\(base)/\(SpectronTransport.quotePath(principalId))/grants"
+        let url = "\(base)/\(AgentMemoryTransport.quotePath(principalId))/grants"
         let (respData, _) = try await transport.request(method: method, path: url, jsonBody: data, extraHeaders: delegationHeaders(onBehalfOf))
         return try await transport.decode(Principal.self, from: respData)
     }

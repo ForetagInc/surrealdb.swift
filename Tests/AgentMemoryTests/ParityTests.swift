@@ -1,21 +1,21 @@
 import Foundation
 import XCTest
-@testable import Spectron
+@testable import AgentMemory
 
 final class ParityTests: XCTestCase {
-    let base = "https://api.spectron.test"
+    let base = "https://api.memory.test"
     let apiKey = "test-key"
     let ctx = "acme-prod"
 
-    private func makeClient(_ http: MockHTTPClient, maxRetries: Int = 3) throws -> Spectron {
-        let transport = try SpectronTransport(
+    private func makeClient(_ http: MockHTTPClient, maxRetries: Int = 3) throws -> AgentMemory {
+        let transport = try AgentMemoryTransport(
             endpoint: base,
             apiKey: apiKey,
             maxRetries: maxRetries,
             client: http,
             sleeper: { _ in }
         )
-        return Spectron(context: ctx, transport: transport)
+        return AgentMemory(context: ctx, transport: transport)
     }
 
     private func header(_ rec: MockHTTPClient.Recorded, _ name: String) -> String? {

@@ -1,15 +1,15 @@
 import Foundation
 import XCTest
-@testable import Spectron
+@testable import AgentMemory
 
 final class ScopeTests: XCTestCase {
-    let base = "https://api.spectron.test"
+    let base = "https://api.memory.test"
     let apiKey = "test-key"
     let ctx = "acme-prod"
 
-    private func makeClient(_ http: MockHTTPClient) throws -> Spectron {
-        let transport = try SpectronTransport(endpoint: base, apiKey: apiKey, client: http, sleeper: { _ in })
-        return Spectron(context: ctx, transport: transport)
+    private func makeClient(_ http: MockHTTPClient) throws -> AgentMemory {
+        let transport = try AgentMemoryTransport(endpoint: base, apiKey: apiKey, client: http, sleeper: { _ in })
+        return AgentMemory(context: ctx, transport: transport)
     }
 
     // MARK: - Normalisation (disjunctive normal form: an OR of AND-clauses)
