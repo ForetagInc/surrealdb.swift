@@ -1,6 +1,29 @@
 import Foundation
 
+/// Where a client endpoint points: out over the network, or at an in-process
+/// store.
+enum ResolvedEndpoint: Sendable {
+    case remote(URL)
+    case embedded(EmbeddedTarget)
+}
+
 enum Endpoint {
+    /// Schemes served in-process rather than over the network.
+    static let embeddedSchemes: Set<String> = ["mem"]
+
+    /// Classifies an endpoint before any URL normalisation.
+    ///
+    /// The embedded branch has to run first: `normalizedRPCURL` rejects every
+    /// scheme outside the remote allowlist and unconditionally appends `/rpc`,
+    /// neither of which makes sense for a storage locator.
+    static func resolve(_ value: String) throws -> ResolvedEndpoint {
+        let scheme = String(value.prefix(while: { $0 != ":" })).lowercased()
+        if embeddedSchemes.contains(scheme) {
+            return .embedded(try EmbeddedTarget(endpoint: value))
+        }
+        return .remote(try normalizedRPCURL(from: value))
+    }
+
     static func normalizedRPCURL(from value: String) throws -> URL {
         guard let original = URL(string: value), let scheme = original.scheme?.lowercased() else {
             throw SurrealError.invalidEndpoint(value)

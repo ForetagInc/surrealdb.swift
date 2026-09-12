@@ -21,6 +21,20 @@ func client_selectsHTTPEngineForHTTPSchemes() throws {
 }
 
 @Test
+func client_handlesMemScheme() throws {
+    #if SURREALDB_EMBEDDED
+    #expect(try SurrealClient(endpoint: "mem://").engine == .embedded)
+    #else
+    // Without the native library the scheme is still recognised; the failure
+    // tells the caller how to get embedded support rather than claiming the
+    // endpoint is malformed.
+    #expect(throws: SurrealError.self) {
+        _ = try SurrealClient(endpoint: "mem://")
+    }
+    #endif
+}
+
+@Test
 func client_rejectsUnknownSchemes() {
     #expect(throws: SurrealError.self) {
         _ = try SurrealClient(endpoint: "ftp://localhost:8000")

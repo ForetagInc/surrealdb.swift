@@ -1,0 +1,6 @@
+# Slices that must build. Everything else is best-effort: a tier-3 Apple target
+# failing should not break a release that only needed the proven ones.
+#
+# Verified building as of this commit: macOS arm64, iOS arm64 (device).
+aarch64-apple-darwin
+aarch64-apple-ios

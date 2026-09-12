@@ -69,7 +69,7 @@ actor SurrealClientCore {
     func createSession(cloneFrom source: SessionID?) async throws -> SessionID {
         guard engine is any SessionCapableRPCEngine else {
             throw SurrealError.unsupportedFeature(
-                "Sessions require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+                "Sessions require a WebSocket endpoint (ws:// or wss://); \(engine.transportDescription) does not multiplex sessions."
             )
         }
 
@@ -104,7 +104,7 @@ actor SurrealClientCore {
     func destroySession(_ id: SessionID) async throws {
         guard engine is any SessionCapableRPCEngine else {
             throw SurrealError.unsupportedFeature(
-                "Sessions require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+                "Sessions require a WebSocket endpoint (ws:// or wss://); \(engine.transportDescription) does not multiplex sessions."
             )
         }
 
@@ -115,7 +115,7 @@ actor SurrealClientCore {
     func listSessions() async throws -> [SessionID] {
         guard engine is any SessionCapableRPCEngine else {
             throw SurrealError.unsupportedFeature(
-                "Sessions require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+                "Sessions require a WebSocket endpoint (ws:// or wss://); \(engine.transportDescription) does not multiplex sessions."
             )
         }
 
@@ -496,7 +496,7 @@ extension SurrealClientCore {
     func live<T: Decodable & Sendable>(_ query: LiveQuery<T>, session: SessionID?) async throws -> AsyncStream<LiveEvent<T>> {
         guard let liveEngine = engine as? any LiveRPCEngine else {
             throw SurrealError.unsupportedFeature(
-                "Live queries require a WebSocket endpoint (ws:// or wss://); the current endpoint uses HTTP."
+                "Live queries require a WebSocket endpoint (ws:// or wss://); \(engine.transportDescription) does not stream notifications."
             )
         }
 

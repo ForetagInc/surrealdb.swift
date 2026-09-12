@@ -5,6 +5,8 @@ on:
     push:
         branches:
             - "**"
+        tags:
+            - "v*"
 
 jobs:
     unit-tests:
@@ -14,6 +16,8 @@ jobs:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
             - name: Select Xcode
               run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            - name: Check version metadata
+              run: ./scripts/check-version.sh
             - name: Unit tests
               run: ./scripts/test-unit.sh
 
@@ -21,7 +25,13 @@ jobs:
         name: Integration Tests
         runs-on: macos-15
         needs: unit-tests
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/v') || startsWith(github.ref, 'refs/heads/version/')
+        if: >-
+            github.event_name == 'pull_request'
+            || startsWith(github.ref, 'refs/heads/dev/v')
+            || startsWith(github.ref, 'refs/heads/release/')
+            || startsWith(github.ref, 'refs/heads/v')
+            || startsWith(github.ref, 'refs/heads/version/')
+            || startsWith(github.ref, 'refs/tags/v')
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
             - name: Select Xcode
@@ -30,3 +40,81 @@ jobs:
               env:
                   SURREALDB_INTEGRATION_MODE: local
               run: ./scripts/test-integration.sh
+
+    # The embedded engine runs in-process, so this needs no server, only the
+    # native library. Every PR builds the host slice as a regression tripwire;
+    # the full cross-platform matrix is release-time work.
+    embedded-tests:
+        name: Embedded Tests (macOS)
+        runs-on: macos-15
+        needs: unit-tests
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+            - name: Select Xcode
+              run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            - name: Read native pin
+              id: pin
+              # GITHUB_OUTPUT takes bare name=value, so drop comments and quotes.
+              run: grep -E '^[A-Z_]+=' scripts/embedded/pin.env | tr -d '"' >> "$GITHUB_OUTPUT"
+            - name: Install Rust
+              run: rustup toolchain install "${{ steps.pin.outputs.RUST_STABLE }}" --profile minimal --no-self-update
+            - name: Cache native build
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: |
+                      ~/.cargo/registry/index
+                      ~/.cargo/registry/cache
+                      ~/.cargo/git/db
+                      .build/embedded/surrealdb.c/target
+                  key: embedded-${{ runner.os }}-${{ steps.pin.outputs.SURREALDB_C_REF }}-${{ steps.pin.outputs.RUST_STABLE }}
+                  restore-keys: embedded-${{ runner.os }}-${{ steps.pin.outputs.SURREALDB_C_REF }}-
+            - name: Embedded tests
+              run: ./scripts/test-embedded.sh
+
+    # The full Apple matrix is expensive (each slice compiles ~565 crates), so it
+    # runs only on release branches and tags. Unproven tier-3 slices are allowed
+    # to fail: build-embedded.sh skips them and fails only on the slices listed
+    # in scripts/embedded/required-slices.txt.
+    embedded-xcframework:
+        name: Embedded XCFramework
+        runs-on: macos-15
+        needs: embedded-tests
+        if: >-
+            startsWith(github.ref, 'refs/heads/dev/v')
+            || startsWith(github.ref, 'refs/heads/release/')
+            || startsWith(github.ref, 'refs/tags/v')
+        steps:
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+            - name: Select Xcode
+              run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            - name: Read native pin
+              id: pin
+              # GITHUB_OUTPUT takes bare name=value, so drop comments and quotes.
+              run: grep -E '^[A-Z_]+=' scripts/embedded/pin.env | tr -d '"' >> "$GITHUB_OUTPUT"
+            - name: Install Rust
+              run: |
+                  rustup toolchain install "${{ steps.pin.outputs.RUST_STABLE }}" --profile minimal --no-self-update
+                  rustup toolchain install nightly --profile minimal --component rust-src --no-self-update
+            - name: Cache native build
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: |
+                      ~/.cargo/registry/index
+                      ~/.cargo/registry/cache
+                      ~/.cargo/git/db
+                      .build/embedded/surrealdb.c/target
+                  key: embedded-xcframework-${{ runner.os }}-${{ steps.pin.outputs.SURREALDB_C_REF }}-${{ steps.pin.outputs.RUST_STABLE }}
+                  restore-keys: embedded-xcframework-${{ runner.os }}-${{ steps.pin.outputs.SURREALDB_C_REF }}-
+            - name: Build XCFramework
+              run: ./scripts/build-embedded.sh --platforms apple
+            - name: Package
+              run: |
+                  cd .build/embedded/out
+                  ditto -c -k --sequesterRsrc --keepParent CSurrealDB.xcframework CSurrealDB.xcframework.zip
+                  swift package compute-checksum CSurrealDB.xcframework.zip | tee checksum.txt
+            - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: CSurrealDB-xcframework
+                  path: |
+                      .build/embedded/out/CSurrealDB.xcframework.zip
+                      .build/embedded/out/checksum.txt

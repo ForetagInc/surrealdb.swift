@@ -15,7 +15,7 @@ iOS 17+ · macOS 14+ · tvOS 17+ · watchOS 10+ · visionOS 1+
 
 ## Features
 
-- Pluggable transport engines (HTTP, WebSocket) with room for additional engines (e.g. embedded) down the line
+- Pluggable transport engines: HTTP, WebSocket, and an opt-in embedded in-memory engine that runs SurrealDB in-process
 - Pluggable wire protocols (CBOR, JSON) — opt into either per-client
 - Type-safe CRUD via `@SurrealModel` macro and query DSL
 - Live queries over WebSocket via `AsyncStream`
@@ -33,7 +33,9 @@ Add the package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/surrealdb/surrealdb.swift.git", from: "0.1.0"),
+    // SwiftPM's `from:` will not resolve a prerelease, so pin the alpha exactly.
+    // Switch to `from: "1.1.0"` once a stable release is out.
+    .package(url: "https://github.com/surrealdb/surrealdb.swift.git", exact: "1.1.0-alpha.1"),
 ],
 targets: [
     .target(
@@ -111,7 +113,7 @@ struct Article: SurrealModel, Codable, Sendable {
 
 ## Connecting
 
-A single `SurrealClient` serves both transports. The engine is selected from the endpoint scheme: `ws://` and `wss://` use the WebSocket engine (live queries, automatic reconnection), while `http://` and `https://` use the request/response HTTP engine.
+A single `SurrealClient` serves every transport. The engine is selected from the endpoint scheme: `ws://` and `wss://` use the WebSocket engine (live queries, automatic reconnection), `http://` and `https://` use the request/response HTTP engine, and `mem://` runs SurrealDB [in-process](#embedded).
 
 ```swift
 // WebSocket engine, inferred from the scheme
@@ -146,6 +148,43 @@ let client = try SurrealClient(
     )
 )
 ```
+
+### Embedded
+
+`mem://` runs SurrealDB inside your process: no server, no network, no ports. The full typed CRUD, query DSL, raw query and transaction surface works exactly as it does against a server.
+
+```swift
+let client = try SurrealClient(endpoint: "mem://")
+try await client.connect()
+try await client.use(namespace: "app", database: "app")
+
+try await client.create(Person(id: nil, name: "Ada", age: 36))
+let people = try await client.select(Person.self)
+```
+
+Each client gets its own isolated store, and the data lives only as long as the client does.
+
+**Embedded support is opt-in and has to be built.** It links a Rust static library compiled from [surrealdb.c](https://github.com/surrealdb/surrealdb.c); without it, the `mem://` scheme is still recognised but throws `SurrealError.unsupportedFeature` telling you how to enable it. Ordinary consumers of the package are unaffected, since the native targets are not in the package graph unless `SURREALDB_EMBEDDED` is set.
+
+```sh
+./scripts/build-embedded.sh                                   # needs a Rust toolchain
+export PKG_CONFIG_PATH="$PWD/.build/embedded/out/pkgconfig"
+SURREALDB_EMBEDDED=1 swift build --manifest-cache none
+```
+
+SwiftPM caches compiled manifests without the environment in the cache key, so pass `--manifest-cache none` when toggling the variable.
+
+Current limitations:
+
+| | |
+|---|---|
+| Platforms | Verified building for macOS (arm64, x86_64) and iOS (arm64 device, arm64 + x86_64 simulator); `scripts/build-embedded.sh --platforms macos,ios` produces an XCFramework with all three slices. tvOS, watchOS and visionOS are wired up but unverified: `aws-lc-sys`, pulled in unavoidably by `surrealdb-core`'s JWT support, has CMake branches for iOS and tvOS only. |
+| Distribution | No prebuilt artifact yet, so building embedded needs a Rust toolchain. The static library is ~140 MB per architecture, and the macOS + iOS XCFramework is **223 MB zipped**. Shipping that as a `binaryTarget` from this package is not currently viable: SwiftPM resolves binary artifacts for the whole package graph, so everyone using the plain WebSocket client would pay the download too. A separate `surrealdb.swift.embedded` package is the likely answer. The cost inside an app is much smaller, since the linker dead-strips what you don't call. |
+| Live queries | Unavailable. `live(_:)` throws `unsupportedFeature`. The C API keys live queries by table name, with no way to attach to the id `LIVE SELECT` returns. |
+| Sessions | Unavailable. `newSession()`/`sessions()` throw `unsupportedFeature`. |
+| Scalar results | `queryRaw("RETURN 1;")[0].result` is `.array([.int(1)])` rather than `.int(1)`; the C layer wraps every statement result. The typed APIs are unaffected. |
+| Bound values | `.table`, `.range`, geometry collections and multi-ring polygons throw rather than being silently coerced. Inline them in the query instead. |
+| Error kinds | Recovered heuristically from message text, since the C layer discards the server's structured error. Unrecognised messages classify as `.internalError`. |
 
 ### Wire Protocol
 
@@ -917,6 +956,12 @@ Run integration tests (requires a running SurrealDB instance):
 SURREALDB_RUN_INTEGRATION=1 swift test
 ```
 
+Run the embedded tests (no server needed, the database runs in-process; builds the native library on first use):
+
+```sh
+./scripts/test-embedded.sh
+```
+
 Integration environment variables:
 
 | Variable | Default | Notes |
@@ -927,6 +972,7 @@ Integration environment variables:
 | `SURREALDB_USER` | _(unset)_ | If unset, sign-in is skipped. |
 | `SURREALDB_PASSWORD` | _(unset)_ | If unset, sign-in is skipped. |
 | `SURREALDB_AUTH_LEVEL` | `root` | One of `root`, `namespace` / `ns`, `database` / `db`. |
+| `SURREALDB_EMBEDDED` | _(unset)_ | `1` puts the native C targets in the package graph. Set by `scripts/test-embedded.sh`. The embedded tests need no server and no extra flag; building with this set is enough to run them. |
 
 ---
 

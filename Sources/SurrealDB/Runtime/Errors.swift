@@ -115,7 +115,7 @@ extension SurrealError: LocalizedError {
     public var recoverySuggestion: String? {
         switch self {
         case .invalidEndpoint:
-            return "Check that the endpoint URL is well-formed and uses ws://, wss://, http://, or https://."
+            return "Check that the endpoint URL is well-formed and uses ws://, wss://, http://, https://, or mem://."
         case .notConnected:
             return "Call connect() before performing operations."
         case .connectionLost:

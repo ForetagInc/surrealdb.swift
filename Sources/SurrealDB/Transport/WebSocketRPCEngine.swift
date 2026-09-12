@@ -1,6 +1,8 @@
 import Foundation
 
 actor WebSocketRPCEngine: LiveRPCEngine, SessionCapableRPCEngine {
+    nonisolated let transportDescription = "WebSocket"
+
     private let endpoint: URL
     private let urlSession: URLSession
     private let clientOptions: SurrealClientOptions

@@ -93,8 +93,32 @@ fi
 
 wait_for_surreal
 
-swift test --filter integration_wsAuthQueryCrud
-swift test --filter integration_httpParity
-swift test --filter integration_wsFullCRUDQueries
-swift test --filter integration_wsFunctionAndGeoQueries
-swift test --filter integration_wsLiveQueries
+# Run separately: live queries and session forking share server state and
+# interfere when executed in one process.
+INTEGRATION_TESTS=(
+  integration_wsAuthQueryCrud
+  integration_httpParity
+  integration_wsFullCRUDQueries
+  integration_wsFunctionAndGeoQueries
+  integration_wsLiveQueries
+  integration_sessionForkIsolationAndClose
+)
+
+# Fail loudly if a test exists but nobody added it above. integration_sessionFork-
+# IsolationAndClose sat unlisted and therefore unrun; this stops that recurring.
+discovered="$(grep -rho 'func integration_[A-Za-z0-9_]*' Tests/SurrealDBTests \
+  | sed 's/func //' \
+  | grep -v '^integration_embedded' \
+  | sort -u)"
+listed="$(printf '%s\n' "${INTEGRATION_TESTS[@]}" | sort -u)"
+missing="$(comm -23 <(echo "$discovered") <(echo "$listed"))"
+
+if [[ -n "$missing" ]]; then
+  echo "Integration tests missing from scripts/test-integration.sh:" >&2
+  echo "$missing" >&2
+  exit 1
+fi
+
+for test_name in "${INTEGRATION_TESTS[@]}"; do
+  swift test --filter "$test_name"
+done
