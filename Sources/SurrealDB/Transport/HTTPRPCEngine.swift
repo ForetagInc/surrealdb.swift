@@ -1,6 +1,8 @@
 import Foundation
 
 actor HTTPRPCEngine: RPCEngine {
+    nonisolated let transportDescription = "HTTP"
+
     private let endpoint: URL
     private let urlSession: URLSession
     private let options: SurrealClientOptions

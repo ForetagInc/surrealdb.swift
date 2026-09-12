@@ -1,9 +1,17 @@
 import Foundation
 
 protocol RPCEngine: Actor {
+    /// Human-readable transport name, used in capability-gating error messages.
+    /// Defaulted so conformers (including test doubles) need not implement it.
+    nonisolated var transportDescription: String { get }
+
     func connect() async throws
     func close() async
     func send(_ request: RPCRequest, session: SessionContext) async throws -> RPCResponseEnvelope
+}
+
+extension RPCEngine {
+    nonisolated var transportDescription: String { "this transport" }
 }
 
 protocol LiveRPCEngine: RPCEngine {
