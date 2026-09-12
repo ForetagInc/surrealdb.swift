@@ -5,6 +5,8 @@ on:
     push:
         branches:
             - "**"
+        tags:
+            - "v*"
 
 jobs:
     unit-tests:
@@ -14,6 +16,8 @@ jobs:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
             - name: Select Xcode
               run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+            - name: Check version metadata
+              run: ./scripts/check-version.sh
             - name: Unit tests
               run: ./scripts/test-unit.sh
 
@@ -21,7 +25,13 @@ jobs:
         name: Integration Tests
         runs-on: macos-15
         needs: unit-tests
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/v') || startsWith(github.ref, 'refs/heads/version/')
+        if: >-
+            github.event_name == 'pull_request'
+            || startsWith(github.ref, 'refs/heads/dev/v')
+            || startsWith(github.ref, 'refs/heads/release/')
+            || startsWith(github.ref, 'refs/heads/v')
+            || startsWith(github.ref, 'refs/heads/version/')
+            || startsWith(github.ref, 'refs/tags/v')
         steps:
             - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
             - name: Select Xcode
@@ -30,3 +40,4 @@ jobs:
               env:
                   SURREALDB_INTEGRATION_MODE: local
               run: ./scripts/test-integration.sh
+
