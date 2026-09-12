@@ -6,6 +6,10 @@ import Foundation
 /// queries and automatic reconnection. `http://` and `https://` endpoints use
 /// the request/response HTTP engine, which does not support live queries; on
 /// those endpoints `live(_:)` throws `SurrealError.unsupportedFeature`.
+///
+/// `mem://` runs SurrealDB in-process, with no server and no network. It
+/// supports neither live queries nor multi-session, and requires the SDK to
+/// have been built with embedded support (see `scripts/build-embedded.sh`).
 public actor SurrealClient: SurrealLiveQueryable {
     private nonisolated let core: SurrealClientCore
 
@@ -13,6 +17,8 @@ public actor SurrealClient: SurrealLiveQueryable {
     public enum Engine: Sendable, Equatable {
         case webSocket
         case http
+        /// In-process SurrealDB, backed by surrealdb.c.
+        case embedded
     }
 
     /// The engine chosen from the endpoint scheme at initialisation.
@@ -21,37 +27,54 @@ public actor SurrealClient: SurrealLiveQueryable {
     /// This client is always scoped to the connection's default/root session.
     public nonisolated let id: SessionID? = nil
 
+    /// - Parameter wireProtocol: Ignored for `mem://` endpoints, which have no wire.
     public init(
         endpoint: String,
         wireProtocol: SurrealWireProtocol = .cbor,
         options: SurrealClientOptions = .init(),
         websocketOptions: SurrealWebSocketOptions = .init(),
+        embeddedOptions: SurrealEmbeddedOptions = .init(),
         session: SessionContext = .init()
     ) throws {
-        let rpcURL = try Endpoint.normalizedRPCURL(from: endpoint)
-        let codec = makeWireCodec(wireProtocol)
-
         let transport: any RPCEngine
-        switch rpcURL.scheme?.lowercased() {
-        case "ws", "wss":
-            self.engine = .webSocket
-            transport = WebSocketRPCEngine(
-                endpoint: rpcURL,
-                clientOptions: options,
-                wsOptions: websocketOptions,
-                codec: codec
+
+        switch try Endpoint.resolve(endpoint) {
+        case .remote(let rpcURL):
+            let codec = makeWireCodec(wireProtocol)
+            switch rpcURL.scheme?.lowercased() {
+            case "ws", "wss":
+                self.engine = .webSocket
+                transport = WebSocketRPCEngine(
+                    endpoint: rpcURL,
+                    clientOptions: options,
+                    wsOptions: websocketOptions,
+                    codec: codec
+                )
+            case "http", "https":
+                self.engine = .http
+                transport = HTTPRPCEngine(
+                    endpoint: rpcURL,
+                    options: options,
+                    codec: codec
+                )
+            default:
+                // Endpoint.normalizedRPCURL already rejects unknown schemes;
+                // this keeps the switch exhaustive without a fatalError.
+                throw SurrealError.invalidEndpoint(endpoint)
+            }
+
+        case .embedded(let target):
+            #if SURREALDB_EMBEDDED
+            self.engine = .embedded
+            transport = EmbeddedRPCEngine(target: target, options: embeddedOptions)
+            #else
+            throw SurrealError.unsupportedFeature(
+                """
+                \(target.connectionString) requires a build of this SDK with embedded support. \
+                Build the native library with scripts/build-embedded.sh and set SURREALDB_EMBEDDED=1.
+                """
             )
-        case "http", "https":
-            self.engine = .http
-            transport = HTTPRPCEngine(
-                endpoint: rpcURL,
-                options: options,
-                codec: codec
-            )
-        default:
-            // Endpoint.normalizedRPCURL already rejects unknown schemes; this
-            // keeps the switch exhaustive without a fatalError.
-            throw SurrealError.invalidEndpoint(endpoint)
+            #endif
         }
 
         self.core = SurrealClientCore(engine: transport, sessionContext: session)
